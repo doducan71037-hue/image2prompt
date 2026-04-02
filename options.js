@@ -3,11 +3,18 @@ const DEFAULT_PROVIDER_ID = "gemini";
 const PROVIDER_DEFAULTS = {
   gemini: {
     apiKey: "",
-    model: "gemini-2.5-flash"
+    model: "gemini-2.5-flash",
+    baseUrl: ""
   },
   zhipu: {
     apiKey: "",
-    model: "glm-4v-plus"
+    model: "glm-4v-plus",
+    baseUrl: ""
+  },
+  "custom-openai": {
+    apiKey: "",
+    model: "gpt-4.1-mini",
+    baseUrl: ""
   }
 };
 
@@ -34,6 +41,18 @@ const LLM_PROVIDERS = [
     apiKeyPlaceholderKey: "apiKeyPlaceholderZhipu",
     apiKeyHelpKey: "apiKeyHelpZhipu",
     modelPlaceholderKey: "modelPlaceholderZhipu"
+  },
+  {
+    id: "custom-openai",
+    labelKey: "providerCustomLabel",
+    descriptionKey: "providerCustomDescription",
+    defaultModel: PROVIDER_DEFAULTS["custom-openai"].model,
+    apiKeyPlaceholderKey: "apiKeyPlaceholderCustom",
+    apiKeyHelpKey: "apiKeyHelpCustom",
+    modelPlaceholderKey: "modelPlaceholderCustom",
+    baseUrlPlaceholderKey: "baseUrlPlaceholderCustom",
+    baseUrlHelpKey: "baseUrlHelpCustom",
+    requiresBaseUrl: true
   }
 ];
 
@@ -85,14 +104,25 @@ const TEXT_CONTENT = {
     providerZhipuLabel: "Zhipu AI",
     providerZhipuDescription: "Use Zhipu's multimodal models to extract prompts from images.",
     providerZhipuLink: "👉 Create Zhipu API Key",
+    providerCustomLabel: "Custom relay API",
+    providerCustomDescription: "Use your own OpenAI-compatible relay endpoint such as NewAPI.",
     apiKeyLabel: "API key",
     apiKeyPlaceholderGemini: "Paste your Gemini API key",
     apiKeyPlaceholderZhipu: "Paste your Zhipu API key",
+    apiKeyPlaceholderCustom: "Paste your relay API key",
     apiKeyHelpGemini: "Your key is saved locally using Chrome sync storage.",
     apiKeyHelpZhipu: "Your key is saved locally using Chrome sync storage.",
+    apiKeyHelpCustom: "Use an OpenAI-compatible key from your own relay or NewAPI panel.",
+    baseUrlLabel: "Base URL",
+    baseUrlPlaceholderCustom: "https://your-domain.com/v1",
+    baseUrlHelpCustom: "Enter the root API URL. The extension will call /chat/completions automatically; a full /chat/completions endpoint also works.",
     modelLabel: "Model identifier",
     modelPlaceholderGemini: "gemini-2.5-flash",
     modelPlaceholderZhipu: "glm-4v-plus",
+    modelPlaceholderCustom: "gpt-4.1-mini or your vision model",
+    testConnectionButton: "Test connectivity",
+    testConnectionHelp: "Checks whether the provider is reachable and whether the current model appears to be available.",
+    testConnectionRunning: "Testing provider connectivity...",
     promptHeading: "Prompt Generation",
     promptDescription: "Tune the guidance sent to the model.",
     instructionLabel: "System prompt",
@@ -227,14 +257,25 @@ const TEXT_CONTENT = {
     providerZhipuLabel: "智谱 AI",
     providerZhipuDescription: "使用智谱多模态模型从图片中提炼提示词。",
     providerZhipuLink: "👉 创建智谱 API Key",
+    providerCustomLabel: "自定义中转 API",
+    providerCustomDescription: "使用你自己的 OpenAI 兼容中转接口，比如 NewAPI。",
     apiKeyLabel: "API 密钥",
     apiKeyPlaceholderGemini: "粘贴你的 Gemini API key",
     apiKeyPlaceholderZhipu: "粘贴你的智谱 API key",
+    apiKeyPlaceholderCustom: "粘贴你的中转 API key",
     apiKeyHelpGemini: "密钥仅保存在本地的 Chrome 同步存储中。",
     apiKeyHelpZhipu: "密钥仅保存在本地的 Chrome 同步存储中。",
+    apiKeyHelpCustom: "填写你自己的中转站或 NewAPI 面板中的 OpenAI 兼容密钥。",
+    baseUrlLabel: "Base URL",
+    baseUrlPlaceholderCustom: "https://你的域名/v1",
+    baseUrlHelpCustom: "填写接口根地址即可，插件会自动请求 /chat/completions；如果你直接填完整的 /chat/completions 地址也可以。",
     modelLabel: "模型标识",
     modelPlaceholderGemini: "gemini-2.5-flash",
     modelPlaceholderZhipu: "glm-4v-plus",
+    modelPlaceholderCustom: "gpt-4.1-mini 或你的识图模型",
+    testConnectionButton: "测试联通性",
+    testConnectionHelp: "检查当前 provider 是否可访问，以及当前模型是否看起来可用。",
+    testConnectionRunning: "正在测试联通性...",
     promptHeading: "提示词生成",
     promptDescription: "自定义发送给模型的整体指导。",
     instructionLabel: "系统提示词",
@@ -430,7 +471,12 @@ let imageTextTranslationSelectEl = null;
 let providerSelectEl = null;
 let providerApiKeyInput = null;
 let providerModelInput = null;
+let providerBaseUrlWrapper = null;
+let providerBaseUrlInput = null;
 let providerApiKeyHelpEl = null;
+let providerBaseUrlHelpEl = null;
+let providerTestButton = null;
+let providerTestStatusEl = null;
 let providerInfoContainer = null;
 let providerInfoDescriptionEl = null;
 let providerInfoPrimaryLink = null;
@@ -517,7 +563,18 @@ document.addEventListener("DOMContentLoaded", () => {
   providerSelectEl = form?.llmProvider || null;
   providerApiKeyInput = form?.providerApiKey || null;
   providerModelInput = form?.providerModel || null;
+  providerBaseUrlWrapper = document.querySelector(
+    "[data-provider-base-url-wrapper]"
+  ) || null;
+  providerBaseUrlInput = form?.providerBaseUrl || null;
   providerApiKeyHelpEl = document.querySelector("[data-provider-help='apiKey']");
+  providerBaseUrlHelpEl = document.querySelector(
+    "[data-provider-help='baseUrl']"
+  );
+  providerTestButton = document.querySelector(
+    "[data-action='test-provider-connection']"
+  );
+  providerTestStatusEl = document.querySelector("[data-provider-test-status]");
   providerInfoContainer = document.querySelector("[data-provider-info]") || null;
   providerInfoDescriptionEl = providerInfoContainer?.querySelector(
     ".provider-info__description"
@@ -581,6 +638,12 @@ document.addEventListener("DOMContentLoaded", () => {
       syncProviderInputs(form);
       updateProviderInfoContent();
       updateProviderFieldPlaceholders();
+    });
+  }
+
+  if (providerTestButton) {
+    providerTestButton.addEventListener("click", () => {
+      handleTestProviderConnection(form, statusEl);
     });
   }
 
@@ -1401,6 +1464,24 @@ function requestPromptForImage(payload) {
   });
 }
 
+function requestProviderConnectivityTest(payload) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { type: "testProviderConnection", ...payload },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          resolve({
+            success: false,
+            error: chrome.runtime.lastError.message
+          });
+          return;
+        }
+        resolve(response);
+      }
+    );
+  });
+}
+
 function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1665,6 +1746,58 @@ function saveOptions(form, statusEl) {
       displayStatus(statusEl, translate("statusSaved"));
     }
   });
+}
+
+async function handleTestProviderConnection(form, statusEl) {
+  if (!form) {
+    return;
+  }
+
+  persistCurrentProviderInputs(form);
+  const providerSettings = cloneProviderSettings(providerSettingsState);
+  displayStatus(statusEl, translate("testConnectionRunning"));
+  displayInlineProviderTestStatus(translate("testConnectionRunning"));
+
+  if (providerTestButton) {
+    providerTestButton.disabled = true;
+  }
+
+  try {
+    const result = await requestProviderConnectivityTest({
+      providerId: currentProviderId,
+      providerSettings
+    });
+
+    if (!result?.success) {
+      displayStatus(
+        statusEl,
+        result?.error || "Unknown error.",
+        true
+      );
+      displayInlineProviderTestStatus(
+        result?.error || "Unknown error.",
+        true
+      );
+      return;
+    }
+
+    displayStatus(statusEl, result.message || translate("statusSaved"));
+    displayInlineProviderTestStatus(result.message || "");
+  } finally {
+    if (providerTestButton) {
+      providerTestButton.disabled = false;
+    }
+  }
+}
+
+function displayInlineProviderTestStatus(message, isError = false) {
+  if (!providerTestStatusEl) {
+    return;
+  }
+  providerTestStatusEl.textContent = message;
+  providerTestStatusEl.style.color = isError
+    ? "#ef4444"
+    : "rgba(37, 99, 235, 0.9)";
 }
 
 function applyLanguage(lang) {
@@ -1939,6 +2072,12 @@ function syncProviderInputs(form, options = {}) {
       providerModelInput.value = entry.model || "";
     }
   }
+
+  if (providerBaseUrlInput) {
+    if (force || document.activeElement !== providerBaseUrlInput) {
+      providerBaseUrlInput.value = entry.baseUrl || "";
+    }
+  }
 }
 
 function persistCurrentProviderInputs(form) {
@@ -1948,9 +2087,12 @@ function persistCurrentProviderInputs(form) {
   const entry = getProviderSettingsFromState(currentProviderId);
   const apiKeyValue =
     form.providerApiKey?.value ?? providerApiKeyInput?.value ?? "";
+  const baseUrlValue =
+    form.providerBaseUrl?.value ?? providerBaseUrlInput?.value ?? "";
   const modelValue =
     form.providerModel?.value ?? providerModelInput?.value ?? "";
   entry.apiKey = apiKeyValue.trim();
+  entry.baseUrl = sanitizeProviderBaseUrl(baseUrlValue);
   const descriptor = getProviderDescriptor(currentProviderId);
   const defaultModel =
     descriptor?.defaultModel ??
@@ -2010,6 +2152,29 @@ function updateProviderFieldPlaceholders() {
     } else {
       providerApiKeyHelpEl.textContent = "";
       providerApiKeyHelpEl.hidden = true;
+    }
+  }
+
+  const requiresBaseUrl = descriptor.requiresBaseUrl === true;
+  if (providerBaseUrlWrapper) {
+    providerBaseUrlWrapper.hidden = !requiresBaseUrl;
+  }
+  if (providerBaseUrlInput) {
+    providerBaseUrlInput.disabled = !requiresBaseUrl;
+    const baseUrlPlaceholderKey = descriptor.baseUrlPlaceholderKey;
+    providerBaseUrlInput.placeholder =
+      requiresBaseUrl && baseUrlPlaceholderKey
+        ? translate(baseUrlPlaceholderKey)
+        : "";
+  }
+  if (providerBaseUrlHelpEl) {
+    const helpKey = descriptor.baseUrlHelpKey;
+    if (requiresBaseUrl && helpKey) {
+      providerBaseUrlHelpEl.textContent = translate(helpKey);
+      providerBaseUrlHelpEl.hidden = false;
+    } else {
+      providerBaseUrlHelpEl.textContent = "";
+      providerBaseUrlHelpEl.hidden = true;
     }
   }
 
@@ -2484,6 +2649,14 @@ function inferProviderIdFromName(name) {
   if (lower.includes("gemini")) {
     return "gemini";
   }
+  if (
+    lower.includes("newapi") ||
+    lower.includes("relay") ||
+    lower.includes("openai-compatible") ||
+    lower.includes("兼容")
+  ) {
+    return "custom-openai";
+  }
   return "";
 }
 
@@ -2497,7 +2670,8 @@ function getProviderSettingsFromState(providerId) {
   if (!providerSettingsState[normalized]) {
     providerSettingsState[normalized] = {
       apiKey: PROVIDER_DEFAULTS[normalized]?.apiKey || "",
-      model: PROVIDER_DEFAULTS[normalized]?.model || ""
+      model: PROVIDER_DEFAULTS[normalized]?.model || "",
+      baseUrl: PROVIDER_DEFAULTS[normalized]?.baseUrl || ""
     };
   }
   const entry = providerSettingsState[normalized];
@@ -2506,6 +2680,11 @@ function getProviderSettingsFromState(providerId) {
   }
   if (typeof entry.model !== "string") {
     entry.model = entry.model ? String(entry.model) : PROVIDER_DEFAULTS[normalized]?.model || "";
+  }
+  if (typeof entry.baseUrl !== "string") {
+    entry.baseUrl = entry.baseUrl
+      ? String(entry.baseUrl)
+      : PROVIDER_DEFAULTS[normalized]?.baseUrl || "";
   }
   return entry;
 }
@@ -2522,7 +2701,8 @@ function sanitizeProviderSettings(raw, legacySource = {}) {
         apiKey: entry.apiKey ? String(entry.apiKey) : "",
         model: entry.model
           ? String(entry.model)
-          : PROVIDER_DEFAULTS[normalized]?.model || ""
+          : PROVIDER_DEFAULTS[normalized]?.model || "",
+        baseUrl: sanitizeProviderBaseUrl(entry.baseUrl)
       };
     });
   }
@@ -2560,8 +2740,16 @@ function createDefaultProviderSettings() {
   Object.entries(PROVIDER_DEFAULTS).forEach(([id, entry]) => {
     defaults[id] = {
       apiKey: entry.apiKey,
-      model: entry.model
+      model: entry.model,
+      baseUrl: entry.baseUrl || ""
     };
   });
   return defaults;
+}
+
+function sanitizeProviderBaseUrl(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.trim().replace(/\s+/g, "");
 }

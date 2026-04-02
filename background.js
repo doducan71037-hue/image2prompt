@@ -3,11 +3,18 @@ const DEFAULT_PROVIDER_ID = "gemini";
 const PROVIDER_DEFAULTS = {
   gemini: {
     name: "Gemini",
-    model: "gemini-2.5-flash"
+    model: "gemini-2.5-flash",
+    baseUrl: ""
   },
   zhipu: {
     name: "Zhipu AI",
-    model: "glm-4v-plus"
+    model: "glm-4v-plus",
+    baseUrl: ""
+  },
+  "custom-openai": {
+    name: "Custom Relay API",
+    model: "gpt-4.1-mini",
+    baseUrl: ""
   }
 };
 
@@ -155,8 +162,34 @@ const LLM_PROVIDERS = {
     name: PROVIDER_DEFAULTS.zhipu.name,
     defaultModel: PROVIDER_DEFAULTS.zhipu.model,
     generate: requestPromptFromZhipu
+  },
+  "custom-openai": {
+    id: "custom-openai",
+    name: PROVIDER_DEFAULTS["custom-openai"].name,
+    defaultModel: PROVIDER_DEFAULTS["custom-openai"].model,
+    requiresBaseUrl: true,
+    generate: requestPromptFromCustomOpenAI
   }
 };
+
+const IMAGE_CONTEXT_MENU_ID = "i2p-generate-prompt";
+
+chrome.runtime.onInstalled.addListener(() => {
+  registerContextMenu();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  registerContextMenu();
+});
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId !== IMAGE_CONTEXT_MENU_ID) {
+    return;
+  }
+  handleImageContextMenuClick(info, tab).catch((error) => {
+    console.error("[Image2Prompt] Context menu click failed:", error);
+  });
+});
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "generatePrompt") {
@@ -175,7 +208,131 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     return true;
   }
+
+  if (message?.type === "testProviderConnection") {
+    handleTestProviderConnection(message)
+      .then((result) => sendResponse({ success: true, ...result }))
+      .catch((error) => {
+        console.error("[Image2Prompt] Provider connectivity test failed:", error);
+        sendResponse({ success: false, error: error.message });
+      });
+    return true;
+  }
+
+  if (message?.type === "enrichPromptPresentation") {
+    handleEnrichPromptPresentation(message)
+      .then((result) => sendResponse({ success: true, ...result }))
+      .catch((error) => {
+        console.error("[Image2Prompt] Prompt presentation enrichment failed:", error);
+        sendResponse({ success: false, error: error.message });
+      });
+    return true;
+  }
 });
+
+function registerContextMenu() {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create(
+      {
+        id: IMAGE_CONTEXT_MENU_ID,
+        title: "Generate prompt with image2prompt",
+        contexts: ["image"]
+      },
+      () => {
+        if (chrome.runtime.lastError) {
+          console.warn(
+            "[Image2Prompt] Unable to register context menu:",
+            chrome.runtime.lastError.message
+          );
+        }
+      }
+    );
+  });
+}
+
+async function handleImageContextMenuClick(info, tab) {
+  const tabId = tab?.id;
+  const imageUrl = typeof info.srcUrl === "string" ? info.srcUrl : "";
+  if (!tabId || !imageUrl) {
+    return;
+  }
+
+  const payload = {
+    type: "contextMenuGeneratePrompt",
+    imageUrl,
+    pageUrl: info.pageUrl || tab?.url || ""
+  };
+
+  try {
+    await sendMessageToTab(tabId, payload);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : String(error || "");
+    const shouldInject =
+      /Receiving end does not exist/i.test(message) ||
+      /Could not establish connection/i.test(message);
+
+    if (!shouldInject) {
+      throw error;
+    }
+
+    await ensureContentScriptInjected(tabId);
+    await sendMessageToTab(tabId, payload);
+  }
+}
+
+function sendMessageToTab(tabId, message) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+async function ensureContentScriptInjected(tabId) {
+  await insertCssFile(tabId, "content.css");
+  await executeScriptFile(tabId, "content.js");
+}
+
+function insertCssFile(tabId, file) {
+  return new Promise((resolve, reject) => {
+    chrome.scripting.insertCSS(
+      {
+        target: { tabId },
+        files: [file]
+      },
+      () => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve();
+      }
+    );
+  });
+}
+
+function executeScriptFile(tabId, file) {
+  return new Promise((resolve, reject) => {
+    chrome.scripting.executeScript(
+      {
+        target: { tabId },
+        files: [file]
+      },
+      () => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve();
+      }
+    );
+  });
+}
 
 async function handleGeneratePrompt(message, sender) {
   const config = await getConfig();
@@ -228,8 +385,12 @@ async function handleGeneratePrompt(message, sender) {
   if (!settings.apiKey) {
     throw new Error(`${provider.name} API key is not set in the extension options.`);
   }
+  if (provider.requiresBaseUrl && !settings.baseUrl) {
+    throw new Error(`${provider.name} base URL is not set in the extension options.`);
+  }
   console.log('[image2prompt 提示词配置]', {
-    apiKey: settings.apiKey,
+    apiKey: maskSecret(settings.apiKey),
+    baseUrl: settings.baseUrl,
     model,
     instruction,
     aspectRatio: config.aspectRatio,
@@ -237,12 +398,13 @@ async function handleGeneratePrompt(message, sender) {
     aspectInstruction,
     customInstruction,
     languageDirective,
-    imageBase64: imageData.data,
+    imageBase64Length: imageData.data?.length || 0,
     imageMimeType: imageData.mimeType,
     altText: message.imageAlt || ""
   })
   const promptText = await provider.generate({
     apiKey: settings.apiKey,
+    baseUrl: settings.baseUrl,
     model,
     instruction,
     languageDirective,
@@ -293,6 +455,77 @@ async function handleGeneratePrompt(message, sender) {
   });
 
   return { prompt: normalizedPrompt, platformUrl, autoOpened };
+}
+
+async function handleTestProviderConnection(message) {
+  const providerId = normalizeProviderId(message?.providerId);
+  const provider = LLM_PROVIDERS[providerId] || LLM_PROVIDERS[DEFAULT_PROVIDER_ID];
+  const providerSettings = sanitizeProviderSettings(message?.providerSettings || {});
+  const settings = providerSettings[providerId] || createDefaultProviderSettings()[providerId];
+  const apiKey = settings?.apiKey ? String(settings.apiKey) : "";
+  const model = settings?.model ? String(settings.model) : provider.defaultModel;
+  const baseUrl = sanitizeProviderBaseUrl(settings?.baseUrl);
+
+  if (!apiKey) {
+    throw new Error(`${provider.name} API key is not set.`);
+  }
+  if (provider.requiresBaseUrl && !baseUrl) {
+    throw new Error(`${provider.name} base URL is not set.`);
+  }
+
+  if (providerId === "custom-openai") {
+    return testCustomOpenAIConnection({ apiKey, baseUrl, model });
+  }
+  if (providerId === "gemini") {
+    return testGeminiConnection({ apiKey, model });
+  }
+  if (providerId === "zhipu") {
+    return testZhipuConnection({ apiKey, model });
+  }
+
+  throw new Error(`Connectivity test is not supported for provider "${providerId}".`);
+}
+
+async function handleEnrichPromptPresentation(message) {
+  const prompt = typeof message?.prompt === "string" ? message.prompt.trim() : "";
+  if (!prompt) {
+    throw new Error("Prompt text is empty.");
+  }
+
+  const config = await getConfig();
+  const { providerId, provider, settings } = resolveProvider(config);
+  const model =
+    settings.model?.trim() ||
+    provider.defaultModel ||
+    PROVIDER_DEFAULTS[DEFAULT_PROVIDER_ID].model;
+
+  if (!settings.apiKey) {
+    throw new Error(`${provider.name} API key is not set in the extension options.`);
+  }
+  if (provider.requiresBaseUrl && !settings.baseUrl) {
+    throw new Error(`${provider.name} base URL is not set in the extension options.`);
+  }
+
+  const instruction = [
+    "You are formatting a prompt-analysis card for a browser extension UI.",
+    "Return strict JSON only.",
+    'Use this shape: {"translations":{"zh":"...","en":"..."},"tags":["..."]}.',
+    "Translate the supplied prompt faithfully into Simplified Chinese and English.",
+    "If the original prompt is already in one of those languages, keep that translation natural and polished.",
+    "Generate 6 to 8 short tags in Simplified Chinese.",
+    "Each tag must be 2 to 6 Chinese characters and should describe subject, style, mood, lighting, color, material, or composition.",
+    "Do not add markdown fences or extra commentary."
+  ].join("\n");
+
+  const raw = await requestTextCompletion({
+    providerId,
+    settings,
+    model,
+    systemInstruction: instruction,
+    userText: `Prompt:\n${prompt}`
+  });
+
+  return normalizePresentationPayload(raw, prompt);
 }
 
 async function getConfig() {
@@ -518,6 +751,464 @@ async function requestPromptFromZhipu({
   return promptText;
 }
 
+async function requestPromptFromCustomOpenAI({
+  apiKey,
+  baseUrl,
+  model,
+  instruction,
+  customInstruction,
+  languageDirective,
+  imageBase64,
+  imageMimeType,
+  altText
+}) {
+  const url = buildOpenAICompatibleEndpoint(baseUrl);
+  const systemSegments = [];
+  const userSegments = [];
+
+  const trimmedInstruction = instruction?.trim() ?? "";
+  const trimmedDirective = languageDirective?.trim() ?? "";
+  const trimmedCustomInstruction = customInstruction?.trim() ?? "";
+
+  if (trimmedInstruction) {
+    systemSegments.push(trimmedInstruction);
+  }
+  if (trimmedDirective) {
+    systemSegments.push(trimmedDirective);
+  }
+  if (trimmedCustomInstruction) {
+    userSegments.push(
+      `Additional user instructions to blend with the final prompt:\n${trimmedCustomInstruction}`
+    );
+  }
+  if (altText) {
+    userSegments.push(`Image alt text: ${altText}`);
+  }
+  if (userSegments.length === 0) {
+    userSegments.push(
+      "Analyze this image and return a single faithful text-to-image prompt."
+    );
+  }
+
+  const safeMimeType = imageMimeType || "image/png";
+  const messages = [];
+
+  if (systemSegments.length > 0) {
+    messages.push({
+      role: "system",
+      content: systemSegments.join("\n\n")
+    });
+  }
+
+  messages.push({
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: userSegments.join("\n\n")
+      },
+      {
+        type: "image_url",
+        image_url: {
+          url: `data:${safeMimeType};base64,${imageBase64}`
+        }
+      }
+    ]
+  });
+
+  const payload = {
+    model,
+    messages,
+    temperature: 0.4,
+    top_p: 0.95
+  };
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    throw new Error(
+      "Unable to reach the custom relay API. Check that the Base URL uses HTTPS and that the relay allows browser-origin requests."
+    );
+  }
+
+  if (!response.ok) {
+    const errorDetails = await safeReadJson(response);
+    throw new Error(
+      errorDetails?.error?.message ||
+      errorDetails?.message ||
+      `Custom relay API error (status ${response.status}).`
+    );
+  }
+
+  const result = await response.json();
+  const messageContent = result?.choices?.[0]?.message?.content;
+  const promptText = extractTextFromOpenAIContent(messageContent).trim();
+  if (!promptText) {
+    throw new Error("Custom relay API did not return any prompt text.");
+  }
+  return promptText;
+}
+
+async function testCustomOpenAIConnection({ apiKey, baseUrl, model }) {
+  const modelsUrl = buildOpenAICompatibleModelsEndpoint(baseUrl);
+
+  try {
+    const response = await fetch(modelsUrl, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`
+      }
+    });
+
+    if (response.ok) {
+      const result = await safeReadJson(response);
+      const modelIds = extractOpenAIModelIds(result);
+      if (modelIds.length === 0) {
+        return {
+          message:
+            "Relay reachable. Authentication succeeded, but the model list was empty."
+        };
+      }
+
+      const hasModel = modelIds.includes(model);
+      const sample = modelIds.slice(0, 8).join(", ");
+      return {
+        message: hasModel
+          ? `Relay reachable. Model "${model}" is available. Sample models: ${sample}`
+          : `Relay reachable, but "${model}" was not listed. Sample models: ${sample}`
+      };
+    }
+
+    if (response.status !== 404 && response.status !== 405) {
+      const errorDetails = await safeReadJson(response);
+      throw new Error(
+        errorDetails?.error?.message ||
+        errorDetails?.message ||
+        `Relay API error (status ${response.status}).`
+      );
+    }
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error(
+        "Unable to reach the custom relay API. Check that the Base URL uses HTTPS and that the relay is online."
+      );
+    }
+    if (error instanceof Error) {
+      throw error;
+    }
+  }
+
+  const chatUrl = buildOpenAICompatibleEndpoint(baseUrl);
+  let response;
+  try {
+    response = await fetch(chatUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: "user",
+            content: "Reply with the single word ok."
+          }
+        ],
+        temperature: 0
+      })
+    });
+  } catch (error) {
+    throw new Error(
+      "Unable to reach the custom relay API. Check that the Base URL uses HTTPS and that the relay is online."
+    );
+  }
+
+  if (!response.ok) {
+    const errorDetails = await safeReadJson(response);
+    throw new Error(
+      errorDetails?.error?.message ||
+      errorDetails?.message ||
+      `Relay API error (status ${response.status}).`
+    );
+  }
+
+  return {
+    message: `Relay reachable. The model "${model}" accepted a basic text request.`
+  };
+}
+
+async function testGeminiConnection({ apiKey, model }) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(
+    apiKey
+  )}`;
+  let response;
+  try {
+    response = await fetch(url, { method: "GET" });
+  } catch (error) {
+    throw new Error("Unable to reach the Gemini API.");
+  }
+
+  if (!response.ok) {
+    const errorDetails = await safeReadJson(response);
+    throw new Error(
+      errorDetails?.error?.message ||
+      `Gemini API error (status ${response.status}).`
+    );
+  }
+
+  const result = await response.json();
+  const modelNames = Array.isArray(result?.models)
+    ? result.models
+        .map((entry) => String(entry?.name || "").split("/").pop())
+        .filter(Boolean)
+    : [];
+  if (modelNames.length === 0) {
+    return { message: "Gemini API reachable. No models were returned." };
+  }
+
+  const hasModel = modelNames.includes(model);
+  const sample = modelNames.slice(0, 8).join(", ");
+  return {
+    message: hasModel
+      ? `Gemini API reachable. Model "${model}" is available. Sample models: ${sample}`
+      : `Gemini API reachable, but "${model}" was not listed. Sample models: ${sample}`
+  };
+}
+
+async function testZhipuConnection({ apiKey, model }) {
+  const url = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Reply with the single word ok."
+              }
+            ]
+          }
+        ],
+        temperature: 0
+      })
+    });
+  } catch (error) {
+    throw new Error("Unable to reach the Zhipu API.");
+  }
+
+  if (!response.ok) {
+    const errorDetails = await safeReadJson(response);
+    throw new Error(
+      errorDetails?.error?.message ||
+      `Zhipu API error (status ${response.status}).`
+    );
+  }
+
+  return {
+    message: `Zhipu API reachable. The model "${model}" accepted a basic text request.`
+  };
+}
+
+async function requestTextCompletion({
+  providerId,
+  settings,
+  model,
+  systemInstruction,
+  userText
+}) {
+  if (providerId === "custom-openai") {
+    return requestTextCompletionFromCustomOpenAI({
+      apiKey: settings.apiKey,
+      baseUrl: settings.baseUrl,
+      model,
+      systemInstruction,
+      userText
+    });
+  }
+  if (providerId === "gemini") {
+    return requestTextCompletionFromGemini({
+      apiKey: settings.apiKey,
+      model,
+      systemInstruction,
+      userText
+    });
+  }
+  if (providerId === "zhipu") {
+    return requestTextCompletionFromZhipu({
+      apiKey: settings.apiKey,
+      model,
+      systemInstruction,
+      userText
+    });
+  }
+  throw new Error(`Text completion is not supported for provider "${providerId}".`);
+}
+
+async function requestTextCompletionFromGemini({
+  apiKey,
+  model,
+  systemInstruction,
+  userText
+}) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+    model
+  )}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+  const parts = [];
+  if (systemInstruction?.trim()) {
+    parts.push({ text: systemInstruction.trim() });
+  }
+  if (userText?.trim()) {
+    parts.push({ text: userText.trim() });
+  }
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      contents: [
+        {
+          role: "user",
+          parts
+        }
+      ],
+      generationConfig: {
+        temperature: 0.2,
+        topK: 32,
+        topP: 0.9
+      }
+    })
+  });
+
+  if (!response.ok) {
+    const errorDetails = await safeReadJson(response);
+    throw new Error(
+      errorDetails?.error?.message ||
+      `Gemini API error (status ${response.status}).`
+    );
+  }
+
+  const result = await response.json();
+  return (
+    result?.candidates?.[0]?.content?.parts
+      ?.map((part) => part.text)
+      .filter(Boolean)
+      .join("\n")
+      .trim() || ""
+  );
+}
+
+async function requestTextCompletionFromZhipu({
+  apiKey,
+  model,
+  systemInstruction,
+  userText
+}) {
+  const response = await fetch("https://open.bigmodel.cn/api/paas/v4/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: [systemInstruction?.trim(), userText?.trim()]
+                .filter(Boolean)
+                .join("\n\n")
+            }
+          ]
+        }
+      ],
+      temperature: 0.2,
+      top_p: 0.9
+    })
+  });
+
+  if (!response.ok) {
+    const errorDetails = await safeReadJson(response);
+    throw new Error(
+      errorDetails?.error?.message ||
+      `Zhipu API error (status ${response.status}).`
+    );
+  }
+
+  const result = await response.json();
+  return extractTextFromZhipuContent(result?.choices?.[0]?.message?.content).trim();
+}
+
+async function requestTextCompletionFromCustomOpenAI({
+  apiKey,
+  baseUrl,
+  model,
+  systemInstruction,
+  userText
+}) {
+  const response = await fetch(buildOpenAICompatibleEndpoint(baseUrl), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        ...(systemInstruction?.trim()
+          ? [
+              {
+                role: "system",
+                content: systemInstruction.trim()
+              }
+            ]
+          : []),
+        {
+          role: "user",
+          content: userText?.trim() || ""
+        }
+      ],
+      temperature: 0.2,
+      top_p: 0.9
+    })
+  });
+
+  if (!response.ok) {
+    const errorDetails = await safeReadJson(response);
+    throw new Error(
+      errorDetails?.error?.message ||
+      errorDetails?.message ||
+      `Custom relay API error (status ${response.status}).`
+    );
+  }
+
+  const result = await response.json();
+  return extractTextFromOpenAIContent(result?.choices?.[0]?.message?.content).trim();
+}
+
 function extractTextFromZhipuContent(content) {
   if (!content) {
     return "";
@@ -546,6 +1237,194 @@ function extractTextFromZhipuContent(content) {
     }
   }
   return "";
+}
+
+function extractTextFromOpenAIContent(content) {
+  if (!content) {
+    return "";
+  }
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => extractTextFromOpenAIContent(part))
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (typeof content === "object") {
+    if (typeof content.text === "string") {
+      return content.text;
+    }
+    if (typeof content.output_text === "string") {
+      return content.output_text;
+    }
+    if (content.type === "text" && typeof content.text === "string") {
+      return content.text;
+    }
+    if (Array.isArray(content.content)) {
+      return extractTextFromOpenAIContent(content.content);
+    }
+  }
+  return "";
+}
+
+function normalizePresentationPayload(rawText, originalPrompt) {
+  const fallback = {
+    translations: {
+      zh: originalPrompt,
+      en: originalPrompt
+    },
+    tags: deriveFallbackTags(originalPrompt)
+  };
+
+  const parsed = parseJsonObjectFromText(rawText);
+  if (!parsed || typeof parsed !== "object") {
+    return fallback;
+  }
+
+  const translations = parsed.translations && typeof parsed.translations === "object"
+    ? parsed.translations
+    : parsed;
+
+  const zh = typeof translations.zh === "string" ? translations.zh.trim() : "";
+  const en = typeof translations.en === "string" ? translations.en.trim() : "";
+
+  const tags = Array.isArray(parsed.tags)
+    ? parsed.tags
+        .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+        .filter(Boolean)
+        .slice(0, 8)
+    : deriveFallbackTags(originalPrompt);
+
+  return {
+    translations: {
+      zh: zh || fallback.translations.zh,
+      en: en || fallback.translations.en
+    },
+    tags: tags.length > 0 ? tags : fallback.tags
+  };
+}
+
+function parseJsonObjectFromText(text) {
+  if (typeof text !== "string" || !text.trim()) {
+    return null;
+  }
+
+  const trimmed = text.trim();
+  const candidates = [trimmed];
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) {
+    candidates.unshift(fenced[1].trim());
+  }
+  const objectMatch = trimmed.match(/\{[\s\S]*\}/);
+  if (objectMatch?.[0]) {
+    candidates.unshift(objectMatch[0]);
+  }
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch (error) {
+      // ignore parsing failures and try the next candidate
+    }
+  }
+  return null;
+}
+
+function deriveFallbackTags(prompt) {
+  if (typeof prompt !== "string" || !prompt.trim()) {
+    return [];
+  }
+  const pieces = prompt
+    .split(/[\n,.;:，。；：]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const unique = [];
+  for (const piece of pieces) {
+    const normalized = piece
+      .replace(/\s+/g, "")
+      .replace(/^[-–—]+/, "")
+      .slice(0, 8);
+    if (!normalized) {
+      continue;
+    }
+    if (!unique.includes(normalized)) {
+      unique.push(normalized);
+    }
+    if (unique.length >= 8) {
+      break;
+    }
+  }
+  return unique;
+}
+
+function buildOpenAICompatibleEndpoint(baseUrl) {
+  const sanitized = sanitizeProviderBaseUrl(baseUrl);
+  if (!sanitized) {
+    throw new Error("Custom relay API base URL is empty.");
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(sanitized);
+  } catch (error) {
+    throw new Error("Custom relay API base URL is invalid.");
+  }
+
+  const pathname = parsed.pathname.replace(/\/+$/, "");
+  if (pathname.endsWith("/chat/completions")) {
+    parsed.pathname = pathname;
+    return parsed.toString();
+  }
+
+  if (pathname.endsWith("/v1")) {
+    parsed.pathname = `${pathname}/chat/completions`;
+    return parsed.toString();
+  }
+
+  parsed.pathname = pathname
+    ? `${pathname}/v1/chat/completions`
+    : "/v1/chat/completions";
+  return parsed.toString();
+}
+
+function buildOpenAICompatibleModelsEndpoint(baseUrl) {
+  const sanitized = sanitizeProviderBaseUrl(baseUrl);
+  if (!sanitized) {
+    throw new Error("Custom relay API base URL is empty.");
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(sanitized);
+  } catch (error) {
+    throw new Error("Custom relay API base URL is invalid.");
+  }
+
+  const pathname = parsed.pathname.replace(/\/+$/, "");
+  if (pathname.endsWith("/chat/completions")) {
+    parsed.pathname = pathname.replace(/\/chat\/completions$/, "/models");
+    return parsed.toString();
+  }
+
+  if (pathname.endsWith("/v1")) {
+    parsed.pathname = `${pathname}/models`;
+    return parsed.toString();
+  }
+
+  parsed.pathname = pathname ? `${pathname}/v1/models` : "/v1/models";
+  return parsed.toString();
+}
+
+function extractOpenAIModelIds(payload) {
+  if (!Array.isArray(payload?.data)) {
+    return [];
+  }
+  return payload.data
+    .map((entry) => (entry?.id ? String(entry.id) : ""))
+    .filter(Boolean);
 }
 
 function buildPlatformUrl(template, prompt) {
@@ -723,6 +1602,7 @@ function resolveProvider(config) {
     provider,
     settings: {
       apiKey: settingsSource?.apiKey ? String(settingsSource.apiKey) : "",
+      baseUrl: sanitizeProviderBaseUrl(settingsSource?.baseUrl),
       model: settingsSource?.model
         ? String(settingsSource.model)
         : provider.defaultModel
@@ -956,6 +1836,7 @@ function sanitizeProviderSettings(raw, legacySource = {}) {
       const normalized = normalizeProviderId(providerId);
       result[normalized] = {
         apiKey: entry.apiKey ? String(entry.apiKey) : "",
+        baseUrl: sanitizeProviderBaseUrl(entry.baseUrl),
         model: entry.model
           ? String(entry.model)
           : PROVIDER_DEFAULTS[normalized]?.model || ""
@@ -992,6 +1873,7 @@ function createDefaultProviderSettings() {
   Object.entries(PROVIDER_DEFAULTS).forEach(([id, descriptor]) => {
     defaults[id] = {
       apiKey: "",
+      baseUrl: descriptor.baseUrl || "",
       model: descriptor.model
     };
   });
@@ -1017,5 +1899,30 @@ function inferProviderIdFromName(name) {
   if (lower.includes("gemini")) {
     return "gemini";
   }
+  if (
+    lower.includes("newapi") ||
+    lower.includes("relay") ||
+    lower.includes("openai-compatible") ||
+    lower.includes("兼容")
+  ) {
+    return "custom-openai";
+  }
   return "";
+}
+
+function sanitizeProviderBaseUrl(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.trim().replace(/\s+/g, "");
+}
+
+function maskSecret(value) {
+  if (typeof value !== "string" || !value) {
+    return "";
+  }
+  if (value.length <= 8) {
+    return "********";
+  }
+  return `${value.slice(0, 4)}...${value.slice(-4)}`;
 }

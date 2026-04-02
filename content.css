@@ -1,126 +1,239 @@
-.i2p-overlay {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  pointer-events: none;
+.i2p-panel-backdrop {
+  position: fixed;
+  inset: 0;
   z-index: 2147483646;
+  background: transparent;
+  pointer-events: none;
 }
 
-.i2p-button {
+.i2p-panel {
+  position: fixed;
+  width: min(320px, calc(100vw - 24px));
+  max-height: min(78vh, 560px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 14px 12px;
+  border-radius: 26px;
+  color: rgba(255, 255, 255, 0.95);
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.14), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.06)),
+    rgba(34, 39, 49, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 28px 64px rgba(2, 6, 23, 0.34);
+  backdrop-filter: blur(24px) saturate(125%);
+  overflow: hidden;
   pointer-events: auto;
-  width: var(--i2p-button-size, 32px);
-  height: var(--i2p-button-size, 32px);
+  font-family:
+    ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.i2p-panel.is-dragging,
+.i2p-panel.is-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+.i2p-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: grab;
+}
+
+.i2p-panel__eyebrow {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  color: rgba(248, 250, 252, 0.76);
+}
+
+.i2p-panel__close {
+  width: 28px;
+  height: 28px;
   border: none;
-  border-radius: var(--i2p-button-radius, 50%);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.i2p-panel__title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.i2p-panel__progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 18px;
+}
+
+.i2p-panel__progress-hint {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(226, 232, 240, 0.8);
+}
+
+.i2p-panel__progress {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.i2p-panel__progress-bar {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.52));
+  transition: width 0.2s linear;
+}
+
+.i2p-panel__body {
+  max-height: 270px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: rgba(248, 250, 252, 0.94);
+}
+
+.i2p-panel__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.i2p-panel__tag {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  position: relative;
-  background: var(--i2p-button-background, rgba(37, 99, 235, 0.92));
-  color: var(--i2p-button-icon-color, #ffffff);
+  min-height: 28px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.i2p-panel__footer {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.i2p-panel__footer-left {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.i2p-panel__status {
+  display: none;
+}
+
+.i2p-panel__locales {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.i2p-panel__locale {
+  min-width: 32px;
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.82);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s ease, transform 0.2s ease, filter 0.2s ease;
-  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.18);
 }
 
-.i2p-button:hover:not(:disabled) {
-  background: var(--i2p-button-background, rgba(37, 99, 235, 0.92));
-  transform: translateY(-1px);
-  filter: brightness(1.05);
+.i2p-panel__locale.is-active {
+  background: rgba(255, 255, 255, 0.92);
+  color: #0f172a;
 }
 
-.i2p-button:disabled {
-  cursor: default;
-  opacity: 0.7;
-  transform: none;
-  box-shadow: none;
-  background: var(--i2p-button-background, rgba(37, 99, 235, 0.92));
-  filter: grayscale(0.2);
-}
-
-.i2p-button__icon {
+.i2p-panel__actions {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  font-size: var(--i2p-button-icon-size, 16px);
-  line-height: 1;
-  pointer-events: none;
-  color: inherit;
-}
-
-.i2p-button.is-loading .i2p-button__icon {
-  visibility: hidden;
-}
-
-.i2p-button::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  width: var(--i2p-spinner-size, 18px);
-  height: var(--i2p-spinner-size, 18px);
-  border-radius: 50%;
-  border: 2px solid transparent;
-  border-top-color: var(--i2p-button-spinner-color, #ffffff);
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-
-.i2p-button.is-loading::after {
-  opacity: 1;
-  animation: i2p-spin 0.8s linear infinite;
-}
-
-.i2p-toast-container {
-  position: fixed;
-  inset: auto 16px 16px 16px;
-  display: flex;
-  flex-direction: column;
+  justify-content: flex-end;
+  flex: 1 1 auto;
   gap: 8px;
-  z-index: 2147483647;
-  pointer-events: none;
+  flex-wrap: nowrap;
 }
 
-.i2p-toast {
-  pointer-events: auto;
-  background: rgba(32, 32, 32, 0.9);
-  color: #fff;
-  padding: 10px 16px;
-  border-radius: 12px;
-  font-size: 13px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-width: 320px;
-  animation: i2p-toast-in 0.25s ease;
-}
-
-.i2p-toast button {
-  align-self: flex-start;
-  pointer-events: auto;
+.i2p-panel__action {
+  height: 40px;
+  padding: 0 14px;
   border: none;
-  background: rgba(255, 255, 255, 0.18);
-  color: #fff;
-  border-radius: 12px;
-  padding: 4px 10px;
-  font-size: 12px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
   cursor: pointer;
-  transition: background 0.2s ease;
 }
 
-.i2p-toast button:hover {
-  background: rgba(255, 255, 255, 0.28);
+.i2p-panel__action--primary {
+  min-width: 92px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #111827;
 }
 
-.i2p-toast--error {
-  background: rgba(176, 0, 32, 0.92);
+.i2p-panel__action--secondary {
+  min-width: 84px;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.i2p-panel__action:hover,
+.i2p-panel__action:focus-visible,
+.i2p-panel__close:hover,
+.i2p-panel__close:focus-visible,
+.i2p-panel__locale:hover,
+.i2p-panel__locale:focus-visible {
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.i2p-panel[data-state="loading"] .i2p-panel__footer {
+  display: none;
+}
+
+.i2p-panel[data-state="loading"] {
+  width: min(320px, calc(100vw - 24px));
+  gap: 8px;
+}
+
+.i2p-panel[data-state="loading"] .i2p-panel__title {
+  font-size: 15px;
+}
+
+.i2p-panel[data-state="error"] .i2p-panel__title {
+  color: #fecaca;
 }
 
 .i2p-dialog-backdrop {
@@ -132,7 +245,7 @@
   padding: 24px;
   background: rgba(15, 23, 42, 0.45);
   backdrop-filter: blur(3px);
-  z-index: 2147483647;
+  z-index: 2147483648;
 }
 
 .i2p-dialog {
@@ -142,18 +255,9 @@
   border-radius: 20px;
   padding: 24px;
   box-shadow: 0 24px 48px rgba(15, 23, 42, 0.22);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-
-@media (prefers-color-scheme: dark) {
-  .i2p-dialog {
-    background: rgba(15, 23, 42, 0.92);
-    color: #f8fafc;
-    box-shadow: 0 24px 48px rgba(2, 6, 23, 0.55);
-  }
 }
 
 .i2p-dialog__title {
@@ -169,14 +273,8 @@
   color: rgba(15, 23, 42, 0.7);
 }
 
-@media (prefers-color-scheme: dark) {
-  .i2p-dialog__description {
-    color: rgba(226, 232, 240, 0.72);
-  }
-}
-
 .i2p-dialog__textarea {
-  width: auto;
+  width: 100%;
   min-height: 120px;
   border-radius: 14px;
   border: 1px solid rgba(148, 163, 184, 0.4);
@@ -192,89 +290,30 @@
 .i2p-dialog__textarea:focus {
   outline: 2px solid rgba(59, 130, 246, 0.6);
   outline-offset: 1px;
-  background: #ffffff;
-}
-
-@media (prefers-color-scheme: dark) {
-  .i2p-dialog__textarea {
-    background: rgba(30, 41, 59, 0.85);
-    border-color: rgba(148, 163, 184, 0.35);
-  }
-
-  .i2p-dialog__textarea:focus {
-    background: rgba(15, 23, 42, 0.95);
-  }
 }
 
 .i2p-dialog__actions {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .i2p-dialog__button {
   border: none;
-  border-radius: 999px;
-  padding: 8px 16px;
-  font-size: 13px;
-  cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  border-radius: 12px;
+  padding: 10px 18px;
+  font: inherit;
   font-weight: 600;
-}
-
-.i2p-dialog__button--secondary {
-  background: rgba(148, 163, 184, 0.16);
-  color: inherit;
-}
-
-.i2p-dialog__button--secondary:hover,
-.i2p-dialog__button--secondary:focus-visible {
-  background: rgba(148, 163, 184, 0.28);
-  outline: none;
+  cursor: pointer;
 }
 
 .i2p-dialog__button--primary {
-  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  background: rgba(37, 99, 235, 0.95);
   color: #ffffff;
-  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.28);
 }
 
-.i2p-dialog__button--primary:hover,
-.i2p-dialog__button--primary:focus-visible {
-  transform: translateY(-1px);
-  box-shadow: 0 14px 28px rgba(37, 99, 235, 0.32);
-  outline: none;
-}
-
-@media (prefers-color-scheme: dark) {
-  .i2p-dialog__button--primary {
-    background: linear-gradient(135deg, #38bdf8, #0ea5e9);
-    color: #0f172a;
-    box-shadow: 0 12px 26px rgba(14, 165, 233, 0.3);
-  }
-
-  .i2p-dialog__button--primary:hover,
-  .i2p-dialog__button--primary:focus-visible {
-    box-shadow: 0 16px 32px rgba(14, 165, 233, 0.36);
-  }
-}
-
-@keyframes i2p-toast-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes i2p-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.i2p-dialog__button--secondary {
+  background: rgba(148, 163, 184, 0.2);
+  color: rgba(15, 23, 42, 0.85);
 }

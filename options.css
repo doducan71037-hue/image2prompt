@@ -1039,9 +1039,60 @@ body {
   color: rgba(15, 23, 42, 0.6);
 }
 
+.provider-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.provider-tools__status {
+  min-height: 20px;
+  font-size: 13px;
+  color: rgba(37, 99, 235, 0.9);
+}
+
+.provider-test {
+  font: inherit;
+  font-weight: 600;
+  padding: 10px 16px;
+  border-radius: 12px;
+  border: none;
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+  cursor: pointer;
+  transition: transform 0.18s ease, background 0.18s ease;
+}
+
+.provider-test:hover,
+.provider-test:focus-visible {
+  transform: translateY(-1px);
+  background: rgba(37, 99, 235, 0.18);
+  outline: none;
+}
+
+.provider-test:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
 @media (prefers-color-scheme: dark) {
   .options-field small {
     color: rgba(226, 232, 240, 0.65);
+  }
+
+  .provider-test {
+    background: rgba(56, 189, 248, 0.18);
+    color: #dbeafe;
+  }
+
+  .provider-test:hover,
+  .provider-test:focus-visible {
+    background: rgba(56, 189, 248, 0.24);
+  }
+
+  .provider-tools__status {
+    color: rgba(125, 211, 252, 0.9);
   }
 }
 
