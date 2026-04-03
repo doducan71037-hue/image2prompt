@@ -16,7 +16,7 @@
 
 使用方式是：在网页图片上点击右键，选择 **Generate prompt with image2prompt**。插件会分析图片、生成提示词，并支持复制或直接跳转到你设置的 AI 平台。
 
-![项目简介](https://github.com/user-attachments/assets/905995c7-bdb6-4c8f-b70d-44b24684c99d)
+![项目简介](assets/readme-context-menu.png)
 
 ## 🔧 本 Fork 的调整
 
@@ -87,8 +87,6 @@ git clone https://github.com/doducan71037-hue/image2prompt.git
 然后，在网页中的图片上点击右键，选择 **Generate prompt with image2prompt** 即可开始生成提示词。
 
 想在生成前补充几句说明（例如「把背景改成霓虹城市」）？在 **设置 → 提示词生成** 中开启 **自定义指令输入**，生成前会弹出输入框，将你的补充说明与系统提示词一起发送给模型。
-
-![项目简介](https://github.com/user-attachments/assets/905995c7-bdb6-4c8f-b70d-44b24684c99d)
 
 ## 🧭 上游项目
 

@@ -16,7 +16,7 @@ This version focuses on a cleaner prompt workflow, an updated result panel, addi
 
 To use it, right-click an image on a webpage and run **Generate prompt with image2prompt** from the context menu. The extension analyzes the image, prepares a prompt, and lets you copy it or open it directly in your preferred AI platform.
 
-![Overview](https://github.com/user-attachments/assets/905995c7-bdb6-4c8f-b70d-44b24684c99d)
+![Overview](assets/readme-context-menu.png)
 
 ## 🔧 This Fork
 
@@ -89,8 +89,6 @@ After installing the extension, open the configuration page to choose your provi
 Then right-click any image on a webpage and choose **Generate prompt with image2prompt**.
 
 Want to blend in extra guidance (for example, “switch the background to a neon city”)? Enable **Custom instructions input** in **Settings → Prompt Generation** to open a dialog before each run and merge your tweaks with the system prompt.
-
-![Project](https://github.com/user-attachments/assets/905995c7-bdb6-4c8f-b70d-44b24684c99d)
 
 ## 🧭 Upstream
 
