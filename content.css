@@ -1,10 +1,74 @@
+/* ===== Keyframes ===== */
+
+@keyframes i2p-panel-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes i2p-backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes i2p-tag-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes i2p-content-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes i2p-footer-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes i2p-dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* ===== Backdrop ===== */
+
 .i2p-panel-backdrop {
   position: fixed;
   inset: 0;
   z-index: 2147483646;
   background: transparent;
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
 }
+
+.i2p-panel-backdrop.is-visible {
+  opacity: 1;
+}
+
+.i2p-panel-backdrop.is-hiding {
+  opacity: 0;
+}
+
+/* ===== Panel ===== */
 
 .i2p-panel {
   position: fixed;
@@ -27,13 +91,38 @@
   pointer-events: auto;
   font-family:
     ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  /* Entrance / exit transitions */
+  opacity: 0;
+  transform: scale(0.92) translateY(8px);
+  transition:
+    opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    width 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    gap 0.3s ease;
+}
+
+.i2p-panel.is-visible {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+}
+
+.i2p-panel.is-hiding {
+  opacity: 0;
+  transform: scale(0.94) translateY(4px);
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
 }
 
 .i2p-panel.is-dragging,
 .i2p-panel.is-dragging * {
   cursor: grabbing !important;
   user-select: none;
+  transition: none !important;
 }
+
+/* ===== Header ===== */
 
 .i2p-panel__header {
   display: flex;
@@ -60,7 +149,12 @@
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
+  transition:
+    transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    background 0.2s ease;
 }
+
+/* ===== Title ===== */
 
 .i2p-panel__title {
   margin: 0;
@@ -68,13 +162,19 @@
   line-height: 1.1;
   font-weight: 700;
   letter-spacing: -0.02em;
+  transition:
+    font-size 0.3s ease,
+    color 0.3s ease;
 }
+
+/* ===== Progress ===== */
 
 .i2p-panel__progress-meta {
   display: flex;
   align-items: center;
   justify-content: flex-start;
   min-height: 18px;
+  transition: opacity 0.25s ease;
 }
 
 .i2p-panel__progress-hint {
@@ -90,6 +190,7 @@
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.12);
   overflow: hidden;
+  transition: opacity 0.25s ease;
 }
 
 .i2p-panel__progress-bar {
@@ -98,8 +199,10 @@
   height: 100%;
   border-radius: inherit;
   background: linear-gradient(90deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.52));
-  transition: width 0.2s linear;
+  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+/* ===== Body ===== */
 
 .i2p-panel__body {
   max-height: 270px;
@@ -109,7 +212,10 @@
   white-space: pre-wrap;
   word-break: break-word;
   color: rgba(248, 250, 252, 0.94);
+  animation: i2p-content-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
+
+/* ===== Tags ===== */
 
 .i2p-panel__tags {
   display: flex;
@@ -128,7 +234,14 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
   font-size: 12px;
   color: rgba(255, 255, 255, 0.88);
+
+  /* Stagger animation — delay set inline by JS */
+  opacity: 0;
+  animation: i2p-tag-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: var(--tag-delay, 0s);
 }
+
+/* ===== Footer ===== */
 
 .i2p-panel__footer {
   display: flex;
@@ -136,6 +249,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  animation: i2p-footer-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) 0.08s both;
 }
 
 .i2p-panel__footer-left {
@@ -149,6 +263,8 @@
 .i2p-panel__status {
   display: none;
 }
+
+/* ===== Locale buttons ===== */
 
 .i2p-panel__locales {
   display: inline-flex;
@@ -168,6 +284,10 @@
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+  transition:
+    background 0.25s ease,
+    color 0.25s ease,
+    transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .i2p-panel__locale--compact {
@@ -181,6 +301,8 @@
   background: rgba(255, 255, 255, 0.92);
   color: #0f172a;
 }
+
+/* ===== Action buttons ===== */
 
 .i2p-panel__actions {
   display: flex;
@@ -201,6 +323,10 @@
   font-weight: 700;
   white-space: nowrap;
   cursor: pointer;
+  transition:
+    transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    background 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .i2p-panel__action--primary {
@@ -216,15 +342,41 @@
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
+/* ===== Hover / focus ===== */
+
 .i2p-panel__action:hover,
-.i2p-panel__action:focus-visible,
+.i2p-panel__action:focus-visible {
+  transform: translateY(-1px);
+  outline: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
 .i2p-panel__close:hover,
-.i2p-panel__close:focus-visible,
+.i2p-panel__close:focus-visible {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.18);
+  outline: none;
+}
+
 .i2p-panel__locale:hover,
 .i2p-panel__locale:focus-visible {
   transform: translateY(-1px);
   outline: none;
 }
+
+.i2p-panel__action:active {
+  transform: translateY(0) scale(0.97);
+}
+
+.i2p-panel__close:active {
+  transform: translateY(0) scale(0.94);
+}
+
+.i2p-panel__locale:active {
+  transform: translateY(0) scale(0.96);
+}
+
+/* ===== Loading state ===== */
 
 .i2p-panel[data-state="loading"] .i2p-panel__footer {
   display: none;
@@ -239,9 +391,37 @@
   font-size: 15px;
 }
 
+/* ===== Error state ===== */
+
 .i2p-panel[data-state="error"] .i2p-panel__title {
   color: #fecaca;
 }
+
+/* ===== Body crossfade helper ===== */
+
+.i2p-panel__body.is-switching {
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.i2p-panel__body.is-entering {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.i2p-panel__tags.is-switching {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.i2p-panel__tags.is-entering {
+  opacity: 1;
+  transition: opacity 0.25s ease;
+}
+
+/* ===== Dialog ===== */
 
 .i2p-dialog-backdrop {
   position: fixed;
@@ -253,6 +433,7 @@
   background: rgba(15, 23, 42, 0.45);
   backdrop-filter: blur(3px);
   z-index: 2147483648;
+  animation: i2p-backdrop-in 0.25s ease both;
 }
 
 .i2p-dialog {
@@ -265,6 +446,7 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  animation: i2p-dialog-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .i2p-dialog__title {
@@ -292,11 +474,13 @@
   line-height: 1.5;
   color: inherit;
   background: rgba(248, 250, 252, 0.95);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .i2p-dialog__textarea:focus {
-  outline: 2px solid rgba(59, 130, 246, 0.6);
-  outline-offset: 1px;
+  outline: none;
+  border-color: rgba(59, 130, 246, 0.6);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
 }
 
 .i2p-dialog__actions {
@@ -313,6 +497,19 @@
   font: inherit;
   font-weight: 600;
   cursor: pointer;
+  transition:
+    transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    background 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.i2p-dialog__button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.i2p-dialog__button:active {
+  transform: translateY(0) scale(0.97);
 }
 
 .i2p-dialog__button--primary {

@@ -71,6 +71,8 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
   let panelDismissBound = false;
   let panelDragState = null;
   let loadingTickerId = 0;
+  let panelGeneration = 0;
+  let crossfadeTimerId = 0;
 
   init().catch((error) => {
     console.error("[Image2Prompt] Failed to initialize content script:", error);
@@ -81,7 +83,7 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     watchForConfigChanges();
     document.addEventListener("contextmenu", handleContextMenuCapture, true);
     window.addEventListener("resize", () => {
-      if (!panelRefs?.root?.hidden) {
+      if (isPanelVisible()) {
         queuePanelPosition(panelState?.anchor);
       }
     });
@@ -90,22 +92,30 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
 
   function setupRuntimeListener() {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      if (message?.type !== "contextMenuGeneratePrompt") {
-        return;
+      if (message?.type === "contextMenuGeneratePrompt") {
+        handleContextMenuGenerate(message)
+          .then(() => sendResponse({ success: true }))
+          .catch((error) => {
+            console.error("[Image2Prompt] Context menu flow failed:", error);
+            showErrorPanel(error?.message || getUiString("unknownError"));
+            sendResponse({
+              success: false,
+              error: error?.message || getUiString("unknownError")
+            });
+          });
+
+        return true;
       }
 
-      handleContextMenuGenerate(message)
-        .then(() => sendResponse({ success: true }))
-        .catch((error) => {
-          console.error("[Image2Prompt] Context menu flow failed:", error);
-          showErrorPanel(error?.message || getUiString("unknownError"));
-          sendResponse({
-            success: false,
-            error: error?.message || getUiString("unknownError")
+      if (message?.type === "platformAutofillPrompt") {
+        handlePlatformAutofillPrompt(message)
+          .then((success) => sendResponse({ success }))
+          .catch((error) => {
+            console.error("[Image2Prompt] Platform autofill failed:", error);
+            sendResponse({ success: false, error: error?.message || getUiString("unknownError") });
           });
-        });
-
-      return true;
+        return true;
+      }
     });
   }
 
@@ -156,18 +166,48 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
       throw new Error(getUiString("emptyPrompt"));
     }
 
+    // Try to extract translations from the JSON prompt itself (new format)
+    let jsonTranslations = null;
+    let jsonTags = null;
+    try {
+      let jsonStr = prompt;
+      const fenced = prompt.match(/```(?:json)?\s*([\s\S]*?)```/i);
+      if (fenced?.[1]) {
+        jsonStr = fenced[1].trim();
+      } else {
+        const objectMatch = prompt.match(/\{[\s\S]*\}/);
+        if (objectMatch?.[0]) {
+          jsonStr = objectMatch[0];
+        }
+      }
+      const parsed = JSON.parse(jsonStr);
+      if (parsed && parsed.prompt_text) {
+        jsonTranslations = {
+          zh: parsed.prompt_text.zh || "",
+          en: parsed.prompt_text.en || ""
+        };
+      }
+      if (parsed && Array.isArray(parsed.tags)) {
+        jsonTags = parsed.tags.slice(0, 8);
+      }
+    } catch (e) {
+      // Not JSON format, will use enrichment
+    }
+
+    // Still call enrichment for better translations and tags
     const enrichment = await sendRuntimeMessage({
       type: "enrichPromptPresentation",
-      prompt
+      prompt: jsonTranslations?.en || jsonTranslations?.zh || prompt
     });
 
+    // Merge: prefer enrichment translations, fall back to JSON-embedded ones
     const translations = {
-      zh: enrichment?.success ? enrichment.translations?.zh || prompt : prompt,
-      en: enrichment?.success ? enrichment.translations?.en || prompt : prompt
+      zh: (enrichment?.success ? enrichment.translations?.zh : null) || jsonTranslations?.zh || prompt,
+      en: (enrichment?.success ? enrichment.translations?.en : null) || jsonTranslations?.en || prompt
     };
-    const tags = enrichment?.success && Array.isArray(enrichment.tags)
+    const tags = (enrichment?.success && Array.isArray(enrichment.tags) && enrichment.tags.length > 0)
       ? enrichment.tags.slice(0, 8)
-      : [];
+      : (jsonTags && jsonTags.length > 0 ? jsonTags : []);
     const selectedLocale = getDefaultPanelLocale(translations);
     const autoCopied = await tryCopyToClipboard(translations[selectedLocale] || prompt);
     await completeLoadingProgress();
@@ -179,6 +219,8 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
       tags,
       selectedLocale,
       platformUrl: generation.platformUrl || buildPlatformUrl(prompt),
+      platformPrompt: generation.platformPrompt || translations[selectedLocale] || prompt,
+      shouldAutofillPlatform: generation.shouldAutofillPlatform === true,
       autoOpened: generation.autoOpened === true,
       autoCopied
     });
@@ -206,6 +248,8 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
 
   function showLoadingPanel(anchor) {
     const refs = ensurePanel();
+    panelGeneration++;
+
     refs.root.dataset.state = "loading";
     refs.eyebrow.textContent = getUiString("eyebrow");
     refs.title.textContent = getUiString("loadingTitle");
@@ -219,8 +263,17 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     refs.progress.hidden = false;
     refs.progressMeta.hidden = false;
     refs.footer.hidden = true;
+
+    // Animated show
     refs.backdrop.hidden = false;
     refs.root.hidden = false;
+    refs.root.classList.remove("is-hiding");
+    refs.backdrop.classList.remove("is-hiding");
+    requestAnimationFrame(() => {
+      refs.backdrop.classList.add("is-visible");
+      refs.root.classList.add("is-visible");
+    });
+
     panelState = { anchor };
     startFakeLoadingProgress();
     bindPanelDismissHandlers();
@@ -229,6 +282,7 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
 
   function showResultPanel(nextState) {
     const refs = ensurePanel();
+    panelGeneration++;
     panelState = inheritManualPosition(nextState);
     refs.root.dataset.state = "result";
     refs.eyebrow.textContent = getUiString("eyebrow");
@@ -238,6 +292,16 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     refs.body.hidden = false;
     refs.footer.hidden = false;
     stopFakeLoadingProgress();
+
+    // Ensure panel is visible (may already be from loading state)
+    refs.backdrop.hidden = false;
+    refs.root.hidden = false;
+    refs.root.classList.remove("is-hiding");
+    refs.backdrop.classList.remove("is-hiding");
+    requestAnimationFrame(() => {
+      refs.backdrop.classList.add("is-visible");
+      refs.root.classList.add("is-visible");
+    });
 
     renderPanelBody();
     bindPanelDismissHandlers();
@@ -254,11 +318,18 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     const isJsonView = panelState.selectedLocale === "json";
 
     refs.body.textContent = currentText;
+    // Re-trigger body entrance animation (skip if called from crossfade)
+    refs.body.classList.remove("is-switching", "is-entering");
+    refs.body.style.animation = "none";
+    void refs.body.offsetWidth;
+    refs.body.style.animation = "";
+
     refs.tags.innerHTML = "";
-    (panelState.tags || []).forEach((tag) => {
+    (panelState.tags || []).forEach((tag, index) => {
       const chip = document.createElement("span");
       chip.className = "i2p-panel__tag";
       chip.textContent = tag;
+      chip.style.setProperty("--tag-delay", `${index * 0.045}s`);
       refs.tags.appendChild(chip);
     });
     refs.tags.hidden = isJsonView || refs.tags.childElementCount === 0;
@@ -282,8 +353,9 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
         button.classList.add("is-active");
       }
       button.addEventListener("click", () => {
+        if (panelState.selectedLocale === entry.id) return;
         panelState.selectedLocale = entry.id;
-        renderPanelBody();
+        crossfadeRenderPanelBody();
       });
       refs.localeGroup.appendChild(button);
     });
@@ -294,9 +366,27 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
       openButton.type = "button";
       openButton.className = "i2p-panel__action i2p-panel__action--secondary";
       openButton.textContent = getUiString("openPlatformButton");
-      openButton.addEventListener("click", () => {
-        if (openPlatformUrl(panelState.platformUrl)) {
+      openButton.addEventListener("click", async () => {
+        const promptText = currentText || panelState.platformPrompt || panelState.prompt || "";
+        const platformUrl = buildPlatformLaunchUrl(
+          promptText,
+          panelState.shouldAutofillPlatform
+        );
+        if (!platformUrl) {
+          refs.status.textContent = getUiString("unknownError");
+          return;
+        }
+        await tryCopyToClipboard(promptText);
+        const response = await sendRuntimeMessage({
+          type: "openPlatform",
+          url: platformUrl,
+          prompt: promptText,
+          shouldAutofill: panelState.shouldAutofillPlatform === true
+        });
+        if (response?.success) {
           refs.status.textContent = getUiString("platformOpened");
+        } else {
+          refs.status.textContent = response?.error || getUiString("unknownError");
         }
       });
       refs.actions.appendChild(openButton);
@@ -320,6 +410,34 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     refs.root.hidden = false;
   }
 
+  function crossfadeRenderPanelBody() {
+    const refs = ensurePanel();
+
+    // Cancel any pending crossfade to prevent stacking
+    if (crossfadeTimerId) {
+      clearTimeout(crossfadeTimerId);
+      crossfadeTimerId = 0;
+    }
+
+    // Fade out body & tags
+    refs.body.classList.remove("is-entering");
+    refs.body.classList.add("is-switching");
+    refs.tags.classList.remove("is-entering");
+    refs.tags.classList.add("is-switching");
+
+    crossfadeTimerId = setTimeout(() => {
+      crossfadeTimerId = 0;
+      // Disable the keyframe animation so it doesn't conflict with crossfade transition
+      refs.body.style.animation = "none";
+      renderPanelBody();
+      // Fade in via transition classes
+      refs.body.classList.remove("is-switching");
+      refs.body.classList.add("is-entering");
+      refs.tags.classList.remove("is-switching");
+      refs.tags.classList.add("is-entering");
+    }, 160);
+  }
+
   function getCurrentPanelText(state) {
     if (state.selectedLocale === "json") {
       return buildStructuredPromptText(state);
@@ -335,6 +453,47 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
   }
 
   function buildStructuredPromptText(state) {
+    // Try to parse the original prompt as JSON (new comprehensive format)
+    let parsedJson = null;
+    try {
+      const raw = state.prompt || "";
+      // Try to extract JSON from the prompt (may have markdown fences)
+      let jsonStr = raw;
+      const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+      if (fenced?.[1]) {
+        jsonStr = fenced[1].trim();
+      } else {
+        const objectMatch = raw.match(/\{[\s\S]*\}/);
+        if (objectMatch?.[0]) {
+          jsonStr = objectMatch[0];
+        }
+      }
+      parsedJson = JSON.parse(jsonStr);
+    } catch (e) {
+      // Not JSON, fall back to legacy format
+    }
+
+    if (parsedJson && typeof parsedJson === "object" && parsedJson.meta) {
+      // New comprehensive JSON format — merge enrichment translations if available
+      if (state.translations) {
+        if (!parsedJson.prompt_text) {
+          parsedJson.prompt_text = {};
+        }
+        // Use enrichment translations as override if prompt_text is missing or sparse
+        if (state.translations.zh && (!parsedJson.prompt_text.zh || parsedJson.prompt_text.zh === "unknown")) {
+          parsedJson.prompt_text.zh = state.translations.zh;
+        }
+        if (state.translations.en && (!parsedJson.prompt_text.en || parsedJson.prompt_text.en === "unknown")) {
+          parsedJson.prompt_text.en = state.translations.en;
+        }
+      }
+      if (state.tags && Array.isArray(state.tags) && state.tags.length > 0) {
+        parsedJson.tags = state.tags;
+      }
+      return JSON.stringify(parsedJson, null, 2);
+    }
+
+    // Legacy fallback: plain text prompt
     return JSON.stringify(
       {
         prompt: {
@@ -351,6 +510,7 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
 
   function showErrorPanel(message) {
     const refs = ensurePanel();
+    panelGeneration++;
     const anchor = panelState?.anchor || getFallbackAnchor();
     refs.root.dataset.state = "error";
     refs.eyebrow.textContent = getUiString("eyebrow");
@@ -371,8 +531,17 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     closeButton.textContent = getUiString("closeButton");
     closeButton.addEventListener("click", hidePanel);
     refs.actions.appendChild(closeButton);
+
+    // Animated show
     refs.backdrop.hidden = false;
     refs.root.hidden = false;
+    refs.root.classList.remove("is-hiding");
+    refs.backdrop.classList.remove("is-hiding");
+    requestAnimationFrame(() => {
+      refs.backdrop.classList.add("is-visible");
+      refs.root.classList.add("is-visible");
+    });
+
     panelState = inheritManualPosition({ anchor });
     bindPanelDismissHandlers();
     queuePanelPosition(anchor);
@@ -481,14 +650,52 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     }
     stopFakeLoadingProgress();
     stopPanelDrag();
-    panelRefs.root.hidden = true;
-    panelRefs.backdrop.hidden = true;
+
+    const gen = ++panelGeneration;
+
+    // Animated hide
+    panelRefs.root.classList.remove("is-visible");
+    panelRefs.root.classList.add("is-hiding");
+    panelRefs.backdrop.classList.remove("is-visible");
+    panelRefs.backdrop.classList.add("is-hiding");
+
+    const onEnd = (event) => {
+      // Ignore bubbled transitionend from children
+      if (event && event.target !== panelRefs.root) return;
+      // Bail if a new show was triggered after this hide
+      if (panelGeneration !== gen) return;
+
+      panelRefs.root.removeEventListener("transitionend", onEnd);
+      panelRefs.root.hidden = true;
+      panelRefs.backdrop.hidden = true;
+      panelRefs.root.classList.remove("is-hiding");
+      panelRefs.backdrop.classList.remove("is-hiding");
+    };
+    panelRefs.root.addEventListener("transitionend", onEnd);
+
+    // Fallback in case transitionend doesn't fire
+    setTimeout(() => {
+      if (panelGeneration !== gen) return;
+      if (panelRefs && !panelRefs.root.hidden) {
+        onEnd(null);
+      }
+    }, 350);
+
     unbindPanelDismissHandlers();
+  }
+
+  function isPanelVisible() {
+    return (
+      panelRefs?.root &&
+      !panelRefs.root.hidden &&
+      panelRefs.root.classList.contains("is-visible") &&
+      !panelRefs.root.classList.contains("is-hiding")
+    );
   }
 
   function queuePanelPosition(anchor) {
     requestAnimationFrame(() => {
-      if (!panelRefs?.root || panelRefs.root.hidden) {
+      if (!isPanelVisible()) {
         return;
       }
       if (panelState?.manualPosition) {
@@ -547,7 +754,7 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
   }
 
   function handlePanelPointerDown(event) {
-    if (event.button !== 0 || !panelRefs?.root || panelRefs.root.hidden) {
+    if (event.button !== 0 || !isPanelVisible()) {
       return;
     }
 
@@ -640,7 +847,7 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
   }
 
   function handleDocumentPointerDown(event) {
-    if (!panelRefs?.root || panelRefs.root.hidden) {
+    if (!isPanelVisible()) {
       return;
     }
     if (event.target instanceof Node && panelRefs.root.contains(event.target)) {
@@ -751,6 +958,14 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
         resolve(response);
       });
     });
+  }
+
+  async function handlePlatformAutofillPrompt(message) {
+    const prompt = typeof message?.prompt === "string" ? message.prompt.trim() : "";
+    if (!prompt) {
+      return false;
+    }
+    return tryAutofillPromptIntoPage(prompt);
   }
 
   function promptForCustomInstruction() {
@@ -951,6 +1166,17 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     return `${template}${separator}prompt=${encodedPrompt}`;
   }
 
+  function buildPlatformLaunchUrl(prompt, shouldAutofill = false) {
+    const template = (config.platformUrl || DEFAULT_CONFIG.platformUrl).trim();
+    if (!template) {
+      return "";
+    }
+    if (shouldAutofill && !template.includes("{{prompt}}")) {
+      return template;
+    }
+    return buildPlatformUrl(prompt);
+  }
+
   async function tryCopyToClipboard(text) {
     try {
       await copyToClipboard(text);
@@ -977,6 +1203,177 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     if (!succeeded) {
       throw new Error("execCommand copy rejected");
     }
+  }
+
+  async function tryAutofillPromptIntoPage(prompt) {
+    const deadline = Date.now() + 12000;
+    while (Date.now() < deadline) {
+      const target = findAutofillTarget();
+      if (target && writePromptToEditable(target, prompt)) {
+        return true;
+      }
+      await wait(400);
+    }
+    return false;
+  }
+
+  function findAutofillTarget() {
+    const activeTarget = normalizeAutofillTarget(document.activeElement);
+    if (activeTarget && isUsableAutofillTarget(activeTarget)) {
+      return activeTarget;
+    }
+
+    const selector = [
+      "textarea",
+      "input:not([type])",
+      "input[type='text']",
+      "input[type='search']",
+      "input[type='url']",
+      "input[type='email']",
+      "[contenteditable='true']",
+      "[role='textbox']"
+    ].join(",");
+
+    const candidates = Array.from(document.querySelectorAll(selector))
+      .map((element) => normalizeAutofillTarget(element))
+      .filter((element) => element && isUsableAutofillTarget(element))
+      .sort((left, right) => scoreAutofillTarget(right) - scoreAutofillTarget(left));
+
+    return candidates[0] || null;
+  }
+
+  function normalizeAutofillTarget(element) {
+    if (!(element instanceof Element)) {
+      return null;
+    }
+    if (
+      element instanceof HTMLTextAreaElement ||
+      element instanceof HTMLInputElement ||
+      element instanceof HTMLElement
+    ) {
+      return element;
+    }
+    return null;
+  }
+
+  function isUsableAutofillTarget(element) {
+    if (!(element instanceof HTMLElement)) {
+      return false;
+    }
+    if (element.matches("[disabled], [readonly], [aria-disabled='true']")) {
+      return false;
+    }
+    if (
+      element instanceof HTMLInputElement &&
+      !["", "text", "search", "url", "email"].includes((element.type || "").toLowerCase())
+    ) {
+      return false;
+    }
+    if (
+      !(element instanceof HTMLTextAreaElement) &&
+      !(element instanceof HTMLInputElement) &&
+      !element.isContentEditable &&
+      element.getAttribute("role") !== "textbox"
+    ) {
+      return false;
+    }
+    const rect = element.getBoundingClientRect();
+    if (rect.width < 120 || rect.height < 24) {
+      return false;
+    }
+    const style = window.getComputedStyle(element);
+    if (style.display === "none" || style.visibility === "hidden") {
+      return false;
+    }
+    return true;
+  }
+
+  function scoreAutofillTarget(element) {
+    if (!(element instanceof HTMLElement)) {
+      return 0;
+    }
+    const rect = element.getBoundingClientRect();
+    const descriptor = [
+      element.getAttribute("placeholder"),
+      element.getAttribute("aria-label"),
+      element.getAttribute("name"),
+      element.getAttribute("data-testid")
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    let score = Math.min((rect.width * rect.height) / 4000, 40);
+    if (element instanceof HTMLTextAreaElement) {
+      score += 40;
+    } else if (element.isContentEditable || element.getAttribute("role") === "textbox") {
+      score += 30;
+    } else {
+      score += 15;
+    }
+    if (/(prompt|message|chat|ask|describe|输入|消息|提示词)/i.test(descriptor)) {
+      score += 35;
+    }
+    return score;
+  }
+
+  function writePromptToEditable(element, prompt) {
+    if (!(element instanceof HTMLElement)) {
+      return false;
+    }
+    element.focus({ preventScroll: true });
+
+    if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+      const prototype =
+        element instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+      if (setter) {
+        setter.call(element, prompt);
+      } else {
+        element.value = prompt;
+      }
+      dispatchEditableEvents(element, prompt);
+      return true;
+    }
+
+    const selection = window.getSelection();
+    if (selection) {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
+    let inserted = false;
+    try {
+      inserted = document.execCommand("selectAll", false) &&
+        document.execCommand("insertText", false, prompt);
+    } catch (error) {
+      inserted = false;
+    }
+    if (!inserted) {
+      element.textContent = prompt;
+    }
+    dispatchEditableEvents(element, prompt);
+    return true;
+  }
+
+  function dispatchEditableEvents(element, prompt) {
+    try {
+      element.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          data: prompt,
+          inputType: "insertText"
+        })
+      );
+    } catch (error) {
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    element.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
   function arrayBufferToBase64(buffer) {

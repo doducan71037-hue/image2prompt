@@ -26,7 +26,7 @@ const DEFAULT_CONFIG = {
   model: PROVIDER_DEFAULTS.gemini.model,
   zhipuModel: PROVIDER_DEFAULTS.zhipu.model,
   promptInstruction:
-    "You are an assistant that writes high quality text-to-image prompts. Provide a single prompt that can recreate the given image faithfully.",
+    "You are an expert visual analyst and text-to-image prompt engineer. Analyze the given image and produce a comprehensive JSON object that captures every visual detail needed to recreate this image faithfully with an AI image generator. Return ONLY a valid JSON object (no markdown fences, no commentary). The JSON must follow this schema:\n{\n  \"meta\": {\n    \"estimated_width\": <int>,\n    \"estimated_height\": <int>,\n    \"aspect_ratio\": \"<W:H>\",\n    \"orientation\": \"landscape|portrait|square\",\n    \"category\": \"portrait|landscape|product|animal|illustration|abstract|architecture|food|other\"\n  },\n  \"subject\": {\n    \"description\": \"<detailed main subject>\",\n    \"position\": \"<center|left|right|top|bottom|etc>\",\n    \"relative_size\": \"<percentage of frame>\",\n    \"details\": {}\n  },\n  \"secondary_subjects\": [ { \"description\": \"...\", \"position\": \"...\", \"relative_size\": \"...\" } ],\n  \"environment\": {\n    \"setting\": \"<indoor|outdoor|studio|abstract|etc>\",\n    \"background\": \"<detailed background description>\",\n    \"foreground\": \"<if any>\",\n    \"depth_of_field\": \"<shallow|medium|deep>\",\n    \"weather\": \"<if applicable>\",\n    \"time_of_day\": \"<if discernible>\"\n  },\n  \"composition\": {\n    \"framing\": \"<rule of thirds|centered|symmetrical|diagonal|etc>\",\n    \"camera_angle\": \"<eye level|low angle|high angle|bird's eye|worm's eye|Dutch angle|etc>\",\n    \"shot_type\": \"<close-up|medium|wide|extreme close-up|full body|etc>\",\n    \"perspective\": \"<frontal|3/4|profile|overhead|etc>\"\n  },\n  \"camera\": {\n    \"focal_length\": \"<estimated mm>\",\n    \"aperture\": \"<estimated f-stop>\",\n    \"lens_type\": \"<wide angle|standard|telephoto|macro|fisheye|tilt-shift|etc>\",\n    \"motion_blur\": false\n  },\n  \"lighting\": {\n    \"type\": \"<natural|studio|dramatic|ambient|rim|backlit|etc>\",\n    \"direction\": \"<front|side|back|top|bottom|etc>\",\n    \"intensity\": \"<soft|medium|hard>\",\n    \"color_temperature\": \"<warm|neutral|cool>\",\n    \"shadows\": \"<soft|harsh|minimal|none>\",\n    \"highlights\": \"<description if notable>\",\n    \"additional_lights\": []\n  },\n  \"color\": {\n    \"palette\": [ { \"name\": \"<descriptive name>\", \"hex\": \"#XXXXXX\", \"role\": \"<dominant|accent|background|etc>\" } ],\n    \"overall_tone\": \"<warm|cool|neutral|mixed>\",\n    \"saturation\": \"<vivid|muted|desaturated|pastel>\",\n    \"contrast\": \"<high|medium|low>\"\n  },\n  \"style\": {\n    \"art_style\": \"<photorealistic|digital art|oil painting|watercolor|3D render|anime|etc>\",\n    \"genre\": \"<if applicable>\",\n    \"influences\": \"<artist or movement references if apparent>\",\n    \"rendering_quality\": \"<8K|4K|high detail|etc>\"\n  },\n  \"texture_and_detail\": {\n    \"surface_textures\": [ \"<e.g., smooth skin, rough stone, glossy metal>\" ],\n    \"material_properties\": [ \"<e.g., translucent, reflective, matte>\" ],\n    \"fine_details\": \"<notable micro-details>\"\n  },\n  \"mood\": {\n    \"atmosphere\": \"<serene|dramatic|mysterious|joyful|melancholic|etc>\",\n    \"emotional_tone\": \"<description>\",\n    \"narrative\": \"<implied story or context if any>\"\n  },\n  \"text_in_image\": {\n    \"has_text\": false,\n    \"content\": [],\n    \"font_style\": \"\",\n    \"placement\": \"\"\n  },\n  \"post_processing\": {\n    \"filters\": [],\n    \"vignette\": false,\n    \"grain_noise\": false,\n    \"color_grading\": \"\",\n    \"effects\": []\n  },\n  \"negative_prompt\": \"<elements to explicitly AVOID to maintain fidelity>\",\n  \"tags\": [\"<exactly 8 tags, each exactly 4 Chinese characters>\"],\n  \"prompt_text\": {\n    \"en\": \"<a single flattened English natural-language prompt that combines all the above details into one paragraph, ready to paste into an image generator>\",\n    \"zh\": \"<同样内容的简体中文版本提示词，语言流畅自然，可直接用于AI图像生成>\"\n  }\n}\nFill every field based on what you observe. For fields that cannot be determined, use reasonable estimates or 'unknown'. Be precise with colors (always include hex codes). The prompt_text fields should be rich, detailed, and faithful to every visual element.",
   platformUrl: "https://chatgpt.com/?prompt={{prompt}}",
   minImageWidth: 256,
   minImageHeight: 256,
@@ -51,17 +51,17 @@ const PROMPT_LANGUAGE_RULES = {
   "en-US": {
     name: "English (United States)",
     directive:
-      "Write the response in natural English as used in the United States. Return only the final prompt in English with no other language or explanations."
+      "For the prompt_text.en field, write in natural English as used in the United States. The JSON structure itself should always use English keys."
   },
   "en-GB": {
     name: "English (United Kingdom)",
     directive:
-      "Write the response in British English. Return only the final prompt in English and omit any additional commentary."
+      "For the prompt_text.en field, write in British English. The JSON structure itself should always use English keys."
   },
   "zh-CN": {
     name: "Simplified Chinese",
     directive:
-      "请使用简体中文撰写最终提示词，只输出提示词正文，不要包含其他语言或额外解释。"
+      "请确保 prompt_text.zh 字段使用流畅自然的简体中文。JSON结构的键名始终使用英文。"
   },
   "ja-JP": {
     name: "Japanese",
@@ -199,11 +199,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           success: true,
           prompt: result.prompt,
           platformUrl: result.platformUrl,
+          platformPrompt: result.platformPrompt,
+          shouldAutofillPlatform: result.shouldAutofillPlatform,
           autoOpened: result.autoOpened
         })
       )
       .catch((error) => {
         console.error("[Image2Prompt] Failed generating prompt:", error);
+        sendResponse({ success: false, error: error.message });
+      });
+    return true;
+  }
+
+  if (message?.type === "openPlatform") {
+    handleOpenPlatform(message, sender)
+      .then((result) => sendResponse({ success: true, ...result }))
+      .catch((error) => {
+        console.error("[Image2Prompt] Opening AI platform failed:", error);
         sendResponse({ success: false, error: error.message });
       });
     return true;
@@ -427,13 +439,30 @@ async function handleGeneratePrompt(message, sender) {
   if (!normalizedPrompt) {
     throw new Error(`${provider.name} did not return any prompt text.`);
   }
-  const platformUrl = buildPlatformUrl(config.platformUrl, normalizedPrompt);
+  const platformPrompt = derivePlatformPromptText(
+    normalizedPrompt,
+    config.promptLanguage
+  );
+  const shouldAutofillPlatform = shouldAutofillPlatformPrompt(
+    config.selectedPlatformId,
+    config.platformUrl
+  );
+  const platformUrl = buildPlatformLaunchUrl(
+    config.platformUrl,
+    platformPrompt,
+    shouldAutofillPlatform
+  );
   const shouldAutoOpen = config.autoOpenPlatform !== false;
   let autoOpened = false;
 
   if (platformUrl && shouldAutoOpen) {
     try {
-      await openPlatformTab(platformUrl, sender?.tab?.windowId);
+      await openPlatformDestination({
+        url: platformUrl,
+        prompt: platformPrompt,
+        shouldAutofill: shouldAutofillPlatform,
+        windowId: sender?.tab?.windowId
+      });
       autoOpened = true;
     } catch (error) {
       console.warn("[Image2Prompt] Unable to open AI platform tab:", error);
@@ -454,7 +483,32 @@ async function handleGeneratePrompt(message, sender) {
     customInstruction
   });
 
-  return { prompt: normalizedPrompt, platformUrl, autoOpened };
+  return {
+    prompt: normalizedPrompt,
+    platformUrl,
+    platformPrompt,
+    shouldAutofillPlatform,
+    autoOpened
+  };
+}
+
+async function handleOpenPlatform(message, sender) {
+  const url = typeof message?.url === "string" ? message.url.trim() : "";
+  const prompt = typeof message?.prompt === "string" ? message.prompt : "";
+  const shouldAutofill = message?.shouldAutofill === true;
+
+  if (!url) {
+    throw new Error("Platform URL is empty.");
+  }
+
+  await openPlatformDestination({
+    url,
+    prompt,
+    shouldAutofill,
+    windowId: sender?.tab?.windowId
+  });
+
+  return { opened: true };
 }
 
 async function handleTestProviderConnection(message) {
@@ -507,14 +561,27 @@ async function handleEnrichPromptPresentation(message) {
   }
 
   const instruction = [
-    "You are formatting a prompt-analysis card for a browser extension UI.",
-    "Return strict JSON only.",
+    "You are a professional bilingual translator and prompt analyst specializing in text-to-image prompts.",
+    "Your task is to produce accurate, natural, and faithful translations of the supplied prompt.",
+    "Return strict JSON only, no markdown fences, no extra commentary.",
     'Use this shape: {"translations":{"zh":"...","en":"..."},"tags":["..."]}.',
-    "Translate the supplied prompt faithfully into Simplified Chinese and English.",
-    "If the original prompt is already in one of those languages, keep that translation natural and polished.",
-    "Generate 6 to 8 short tags in Simplified Chinese.",
-    "Each tag must be 2 to 6 Chinese characters and should describe subject, style, mood, lighting, color, material, or composition.",
-    "Do not add markdown fences or extra commentary."
+    "",
+    "## Translation Rules:",
+    "1. Translate the supplied prompt faithfully into both Simplified Chinese (zh) and English (en).",
+    "2. Preserve ALL visual details, technical terms, color descriptions, composition elements, and artistic style references.",
+    "3. Do NOT omit, summarize, or simplify any part of the prompt during translation.",
+    "4. Do NOT add information that is not in the original prompt.",
+    "5. If the original prompt is already in Chinese, produce a polished Chinese version and an accurate English translation.",
+    "6. If the original prompt is already in English, produce a polished English version and an accurate Chinese translation.",
+    "7. For Chinese (zh): use natural, fluent Simplified Chinese. Translate technical/artistic terms into their commonly accepted Chinese equivalents (e.g., 'bokeh' → '焦外虚化', 'rule of thirds' → '三分法构图', 'rim lighting' → '轮廓光'). Maintain the descriptive richness of the original.",
+    "8. For English (en): use natural, professional English. Keep standard photography/art terminology in their original English form.",
+    "",
+    "## Tag Rules:",
+    "Generate exactly 8 short tags in Simplified Chinese.",
+    "Each tag must be exactly 4 Chinese characters — no more, no less.",
+    "Tags should cover: subject matter, art style, mood/atmosphere, lighting type, dominant colors, material/texture, composition technique, and camera angle.",
+    "Tags should be diverse and specific — avoid generic tags like '美丽' or '好看'.",
+    "Prioritize visually descriptive and technically meaningful tags."
   ].join("\n");
 
   const raw = await requestTextCompletion({
@@ -632,7 +699,9 @@ async function requestPromptFromGemini({
     generationConfig: {
       temperature: 0.4,
       topK: 32,
-      topP: 0.95
+      topP: 0.95,
+      responseMimeType: "application/json",
+      maxOutputTokens: 8192
     }
   };
 
@@ -722,7 +791,8 @@ async function requestPromptFromZhipu({
       }
     ],
     temperature: 0.4,
-    top_p: 0.95
+    top_p: 0.95,
+    max_tokens: 8192
   };
 
   const response = await fetch(url, {
@@ -786,7 +856,7 @@ async function requestPromptFromCustomOpenAI({
   }
   if (userSegments.length === 0) {
     userSegments.push(
-      "Analyze this image and return a single faithful text-to-image prompt."
+      "Analyze this image and return a comprehensive JSON object describing every visual detail for faithful recreation."
     );
   }
 
@@ -820,7 +890,9 @@ async function requestPromptFromCustomOpenAI({
     model,
     messages,
     temperature: 0.4,
-    top_p: 0.95
+    top_p: 0.95,
+    max_tokens: 8192,
+    response_format: { type: "json_object" }
   };
 
   let response;
@@ -1442,6 +1514,17 @@ function buildPlatformUrl(template, prompt) {
   return `${trimmedTemplate}${separator}prompt=${encodedPrompt}`;
 }
 
+function buildPlatformLaunchUrl(template, prompt, shouldAutofill) {
+  const trimmedTemplate = (template || DEFAULT_CONFIG.platformUrl).trim();
+  if (!trimmedTemplate) {
+    return "";
+  }
+  if (shouldAutofill && !trimmedTemplate.includes("{{prompt}}")) {
+    return trimmedTemplate;
+  }
+  return buildPlatformUrl(trimmedTemplate, prompt);
+}
+
 async function openPlatformTab(url, windowId) {
   return new Promise((resolve, reject) => {
     chrome.tabs.create(
@@ -1458,6 +1541,107 @@ async function openPlatformTab(url, windowId) {
       }
     );
   });
+}
+
+async function openPlatformDestination({
+  url,
+  prompt,
+  shouldAutofill,
+  windowId
+}) {
+  const tab = await openPlatformTab(url, windowId);
+  if (!shouldAutofill || !prompt || !tab?.id) {
+    return tab;
+  }
+  try {
+    await autofillPromptInTab(tab.id, prompt);
+  } catch (error) {
+    console.warn("[Image2Prompt] Unable to autofill AI platform prompt:", error);
+  }
+  return tab;
+}
+
+async function autofillPromptInTab(tabId, prompt) {
+  const deadline = Date.now() + 12000;
+  while (Date.now() < deadline) {
+    const tab = await getTab(tabId);
+    if (!tab) {
+      return false;
+    }
+    if (tab.status === "complete") {
+      const response = await sendMessageToTabEnsured(tabId, {
+        type: "platformAutofillPrompt",
+        prompt
+      }).catch(() => null);
+      if (response?.success) {
+        return true;
+      }
+    }
+    await wait(400);
+  }
+  return false;
+}
+
+async function sendMessageToTabEnsured(tabId, message) {
+  try {
+    return await sendMessageToTab(tabId, message);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error || "");
+    const shouldInject =
+      /Receiving end does not exist/i.test(reason) ||
+      /Could not establish connection/i.test(reason);
+    if (!shouldInject) {
+      throw error;
+    }
+    await ensureContentScriptInjected(tabId);
+    return sendMessageToTab(tabId, message);
+  }
+}
+
+async function getTab(tabId) {
+  return new Promise((resolve) => {
+    chrome.tabs.get(tabId, (tab) => {
+      if (chrome.runtime.lastError) {
+        resolve(null);
+        return;
+      }
+      resolve(tab);
+    });
+  });
+}
+
+async function wait(duration) {
+  return new Promise((resolve) => setTimeout(resolve, duration));
+}
+
+function derivePlatformPromptText(prompt, promptLanguage) {
+  const parsed = parseJsonObjectFromText(prompt);
+  const promptText =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed.prompt_text
+      : null;
+  const zh = typeof promptText?.zh === "string" ? promptText.zh.trim() : "";
+  const en = typeof promptText?.en === "string" ? promptText.en.trim() : "";
+  const preferChinese =
+    typeof promptLanguage === "string" && promptLanguage.toLowerCase().startsWith("zh");
+
+  if (preferChinese && zh) {
+    return zh;
+  }
+  if (en) {
+    return en;
+  }
+  if (zh) {
+    return zh;
+  }
+  return prompt;
+}
+
+function shouldAutofillPlatformPrompt(platformId, template) {
+  return (
+    typeof platformId === "string" &&
+    platformId.startsWith("custom-")
+  );
 }
 
 function arrayBufferToBase64(buffer) {
@@ -1621,6 +1805,26 @@ function sanitizeConfig(raw) {
   merged.zhipuModel = providerSettings.zhipu.model;
   merged.enableCustomPromptInput = merged.enableCustomPromptInput === true;
   merged.removeWatermark = raw?.removeWatermark === true;
+
+  // Auto-migrate: replace legacy promptInstruction with new JSON-based default
+  const LEGACY_INSTRUCTIONS = [
+    "You are an assistant that writes high quality text-to-image prompts. Provide a single prompt that can recreate the given image faithfully.",
+    "You are an assistant that writes high quality text-to-image prompts.",
+  ];
+  if (
+    typeof merged.promptInstruction === "string" &&
+    LEGACY_INSTRUCTIONS.some(
+      (legacy) => merged.promptInstruction.trim() === legacy.trim()
+    )
+  ) {
+    merged.promptInstruction = DEFAULT_CONFIG.promptInstruction;
+    // Persist the migration so it only triggers once
+    try {
+      chrome.storage.sync.set({ promptInstruction: DEFAULT_CONFIG.promptInstruction });
+    } catch (e) {
+      // ignore storage errors during migration
+    }
+  }
   merged.imageTextTranslationTarget = normalizeImageTextTranslationTarget(
     raw?.imageTextTranslationTarget
   );
@@ -1711,6 +1915,17 @@ function appendAspectRatioToPrompt(prompt, aspectRatio, customAspectRatio) {
   if (lowerPrompt.includes(ratioLower) || lowerPrompt.includes(ratioWithX)) {
     return prompt;
   }
+  const parsed = parseJsonObjectFromText(prompt);
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const next = {
+      ...parsed,
+      meta: {
+        ...(parsed.meta && typeof parsed.meta === "object" ? parsed.meta : {}),
+        aspect_ratio: ratioValue
+      }
+    };
+    return JSON.stringify(next, null, 2);
+  }
   return `${prompt}\n\nAspect ratio: ${ratioValue}`;
 }
 
@@ -1724,10 +1939,10 @@ function getPromptLanguageName(code) {
 function getRichnessInstruction(richness) {
   const normalized = normalizePromptRichness(richness);
   const instructions = {
-    "concise": "Generate a concise, brief prompt with only essential details. Keep it short and to the point.",
-    "standard": "Generate a standard prompt with balanced detail. Include important visual elements and composition.",
-    "detailed": "Generate a detailed prompt with comprehensive descriptions. Include colors, lighting, style, mood, and composition details.",
-    "very-detailed": "Generate a very detailed and comprehensive prompt. Include extensive descriptions of colors, lighting, shadows, textures, style, mood, composition, perspective, atmosphere, and all visual elements. Be thorough and descriptive."
+    "concise": "In the JSON output, keep descriptions brief and focus on the most essential visual elements. Omit minor or uncertain details. The prompt_text fields should be concise (1-2 sentences).",
+    "standard": "In the JSON output, provide balanced detail across all fields. Include all clearly observable visual elements, colors, and composition. The prompt_text fields should be moderately detailed (2-3 sentences).",
+    "detailed": "In the JSON output, provide comprehensive descriptions for every field. Include precise colors with hex codes, detailed lighting analysis, textures, materials, and spatial relationships. The prompt_text fields should be richly detailed (3-5 sentences).",
+    "very-detailed": "In the JSON output, be exhaustive in every field. Describe all colors with exact hex codes, analyze every light source and shadow, identify every texture and material, map precise spatial relationships and proportions, note subtle gradients and transitions. The prompt_text fields should be extremely thorough and descriptive (5-8 sentences), capturing every nuance needed for pixel-perfect recreation."
   };
   return instructions[normalized] || instructions["standard"];
 }
