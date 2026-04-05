@@ -119,6 +119,82 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     });
   }
 
+  function parseEmbeddedPromptPresentation(prompt) {
+    const parsed = parseJsonObjectFromText(prompt);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+
+    const promptText =
+      parsed.prompt_text && typeof parsed.prompt_text === "object"
+        ? parsed.prompt_text
+        : null;
+    const translations = {
+      zh: typeof promptText?.zh === "string" ? promptText.zh.trim() : "",
+      en: typeof promptText?.en === "string" ? promptText.en.trim() : ""
+    };
+    const tags = normalizePanelTags(parsed.tags);
+
+    return {
+      translations,
+      tags,
+      isComplete: Boolean(translations.zh && translations.en && tags.length === 8)
+    };
+  }
+
+  function normalizePanelTags(tags) {
+    if (!Array.isArray(tags)) {
+      return [];
+    }
+
+    const normalized = [];
+    for (const entry of tags) {
+      const value = typeof entry === "string" ? entry.trim() : "";
+      if (!isFourChineseCharacterTag(value)) {
+        continue;
+      }
+      if (!normalized.includes(value)) {
+        normalized.push(value);
+      }
+      if (normalized.length === 8) {
+        break;
+      }
+    }
+
+    return normalized;
+  }
+
+  function isFourChineseCharacterTag(value) {
+    return typeof value === "string" && /^[\u4e00-\u9fff]{4}$/.test(value.trim());
+  }
+
+  function parseJsonObjectFromText(text) {
+    if (typeof text !== "string" || !text.trim()) {
+      return null;
+    }
+
+    const trimmed = text.trim();
+    const candidates = [trimmed];
+    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced?.[1]) {
+      candidates.unshift(fenced[1].trim());
+    }
+    const objectMatch = trimmed.match(/\{[\s\S]*\}/);
+    if (objectMatch?.[0]) {
+      candidates.unshift(objectMatch[0]);
+    }
+
+    for (const candidate of candidates) {
+      try {
+        return JSON.parse(candidate);
+      } catch (error) {
+        // ignore invalid JSON candidates and keep trying
+      }
+    }
+
+    return null;
+  }
+
   async function handleContextMenuGenerate(message) {
     if (isDomainBlocked(CURRENT_HOSTNAME, config.domainFilters)) {
       throw new Error(getUiString("blocked"));
@@ -166,47 +242,25 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
       throw new Error(getUiString("emptyPrompt"));
     }
 
-    // Try to extract translations from the JSON prompt itself (new format)
-    let jsonTranslations = null;
-    let jsonTags = null;
-    try {
-      let jsonStr = prompt;
-      const fenced = prompt.match(/```(?:json)?\s*([\s\S]*?)```/i);
-      if (fenced?.[1]) {
-        jsonStr = fenced[1].trim();
-      } else {
-        const objectMatch = prompt.match(/\{[\s\S]*\}/);
-        if (objectMatch?.[0]) {
-          jsonStr = objectMatch[0];
-        }
-      }
-      const parsed = JSON.parse(jsonStr);
-      if (parsed && parsed.prompt_text) {
-        jsonTranslations = {
-          zh: parsed.prompt_text.zh || "",
-          en: parsed.prompt_text.en || ""
-        };
-      }
-      if (parsed && Array.isArray(parsed.tags)) {
-        jsonTags = parsed.tags.slice(0, 8);
-      }
-    } catch (e) {
-      // Not JSON format, will use enrichment
+    const embeddedPresentation = parseEmbeddedPromptPresentation(prompt);
+    const jsonTranslations = embeddedPresentation?.translations || null;
+    const jsonTags = embeddedPresentation?.tags || null;
+    let enrichment = null;
+
+    if (!embeddedPresentation?.isComplete) {
+      enrichment = await sendRuntimeMessage({
+        type: "enrichPromptPresentation",
+        prompt: jsonTranslations?.en || jsonTranslations?.zh || prompt
+      });
     }
 
-    // Still call enrichment for better translations and tags
-    const enrichment = await sendRuntimeMessage({
-      type: "enrichPromptPresentation",
-      prompt: jsonTranslations?.en || jsonTranslations?.zh || prompt
-    });
-
-    // Merge: prefer enrichment translations, fall back to JSON-embedded ones
     const translations = {
       zh: (enrichment?.success ? enrichment.translations?.zh : null) || jsonTranslations?.zh || prompt,
       en: (enrichment?.success ? enrichment.translations?.en : null) || jsonTranslations?.en || prompt
     };
-    const tags = (enrichment?.success && Array.isArray(enrichment.tags) && enrichment.tags.length > 0)
-      ? enrichment.tags.slice(0, 8)
+    const enrichedTags = enrichment?.success ? normalizePanelTags(enrichment.tags) : [];
+    const tags = enrichedTags.length > 0
+      ? enrichedTags
       : (jsonTags && jsonTags.length > 0 ? jsonTags : []);
     const selectedLocale = getDefaultPanelLocale(translations);
     const autoCopied = await tryCopyToClipboard(translations[selectedLocale] || prompt);
@@ -891,8 +945,7 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
   }
 
   function getDefaultPanelLocale(translations) {
-    const uiLanguage = getUiLanguage();
-    if (uiLanguage === "zh" && translations.zh) {
+    if (translations.zh) {
       return "zh";
     }
     if (translations.en) {

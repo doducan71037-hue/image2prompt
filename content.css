@@ -218,22 +218,29 @@
 /* ===== Tags ===== */
 
 .i2p-panel__tags {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
+  width: 100%;
 }
 
 .i2p-panel__tag {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 28px;
-  padding: 6px 12px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 10px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
   color: rgba(255, 255, 255, 0.88);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 
   /* Stagger animation — delay set inline by JS */
   opacity: 0;

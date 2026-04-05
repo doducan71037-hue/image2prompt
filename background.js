@@ -18,6 +18,51 @@ const PROVIDER_DEFAULTS = {
   }
 };
 
+const LEGACY_SIMPLE_PROMPT_INSTRUCTIONS = [
+  "You are an assistant that writes high quality text-to-image prompts. Provide a single prompt that can recreate the given image faithfully.",
+  "You are an assistant that writes high quality text-to-image prompts."
+];
+
+const PREVIOUS_VERBOSE_JSON_PROMPT_INSTRUCTION =
+  "You are an expert visual analyst and text-to-image prompt engineer. Analyze the given image and produce a comprehensive JSON object that captures every visual detail needed to recreate this image faithfully with an AI image generator. Return ONLY a valid JSON object (no markdown fences, no commentary). The JSON must follow this schema:\n{\n  \"meta\": {\n    \"estimated_width\": <int>,\n    \"estimated_height\": <int>,\n    \"aspect_ratio\": \"<W:H>\",\n    \"orientation\": \"landscape|portrait|square\",\n    \"category\": \"portrait|landscape|product|animal|illustration|abstract|architecture|food|other\"\n  },\n  \"subject\": {\n    \"description\": \"<detailed main subject>\",\n    \"position\": \"<center|left|right|top|bottom|etc>\",\n    \"relative_size\": \"<percentage of frame>\",\n    \"details\": {}\n  },\n  \"secondary_subjects\": [ { \"description\": \"...\", \"position\": \"...\", \"relative_size\": \"...\" } ],\n  \"environment\": {\n    \"setting\": \"<indoor|outdoor|studio|abstract|etc>\",\n    \"background\": \"<detailed background description>\",\n    \"foreground\": \"<if any>\",\n    \"depth_of_field\": \"<shallow|medium|deep>\",\n    \"weather\": \"<if applicable>\",\n    \"time_of_day\": \"<if discernible>\"\n  },\n  \"composition\": {\n    \"framing\": \"<rule of thirds|centered|symmetrical|diagonal|etc>\",\n    \"camera_angle\": \"<eye level|low angle|high angle|bird's eye|worm's eye|Dutch angle|etc>\",\n    \"shot_type\": \"<close-up|medium|wide|extreme close-up|full body|etc>\",\n    \"perspective\": \"<frontal|3/4|profile|overhead|etc>\"\n  },\n  \"camera\": {\n    \"focal_length\": \"<estimated mm>\",\n    \"aperture\": \"<estimated f-stop>\",\n    \"lens_type\": \"<wide angle|standard|telephoto|macro|fisheye|tilt-shift|etc>\",\n    \"motion_blur\": false\n  },\n  \"lighting\": {\n    \"type\": \"<natural|studio|dramatic|ambient|rim|backlit|etc>\",\n    \"direction\": \"<front|side|back|top|bottom|etc>\",\n    \"intensity\": \"<soft|medium|hard>\",\n    \"color_temperature\": \"<warm|neutral|cool>\",\n    \"shadows\": \"<soft|harsh|minimal|none>\",\n    \"highlights\": \"<description if notable>\",\n    \"additional_lights\": []\n  },\n  \"color\": {\n    \"palette\": [ { \"name\": \"<descriptive name>\", \"hex\": \"#XXXXXX\", \"role\": \"<dominant|accent|background|etc>\" } ],\n    \"overall_tone\": \"<warm|cool|neutral|mixed>\",\n    \"saturation\": \"<vivid|muted|desaturated|pastel>\",\n    \"contrast\": \"<high|medium|low>\"\n  },\n  \"style\": {\n    \"art_style\": \"<photorealistic|digital art|oil painting|watercolor|3D render|anime|etc>\",\n    \"genre\": \"<if applicable>\",\n    \"influences\": \"<artist or movement references if apparent>\",\n    \"rendering_quality\": \"<8K|4K|high detail|etc>\"\n  },\n  \"texture_and_detail\": {\n    \"surface_textures\": [ \"<e.g., smooth skin, rough stone, glossy metal>\" ],\n    \"material_properties\": [ \"<e.g., translucent, reflective, matte>\" ],\n    \"fine_details\": \"<notable micro-details>\"\n  },\n  \"mood\": {\n    \"atmosphere\": \"<serene|dramatic|mysterious|joyful|melancholic|etc>\",\n    \"emotional_tone\": \"<description>\",\n    \"narrative\": \"<implied story or context if any>\"\n  },\n  \"text_in_image\": {\n    \"has_text\": false,\n    \"content\": [],\n    \"font_style\": \"\",\n    \"placement\": \"\"\n  },\n  \"post_processing\": {\n    \"filters\": [],\n    \"vignette\": false,\n    \"grain_noise\": false,\n    \"color_grading\": \"\",\n    \"effects\": []\n  },\n  \"negative_prompt\": \"<elements to explicitly AVOID to maintain fidelity>\",\n  \"tags\": [\"<exactly 8 tags, each exactly 4 Chinese characters>\"],\n  \"prompt_text\": {\n    \"en\": \"<a single flattened English natural-language prompt that combines all the above details into one paragraph, ready to paste into an image generator>\",\n    \"zh\": \"<同样内容的简体中文版本提示词，语言流畅自然，可直接用于AI图像生成>\"\n  }\n}\nFill every field based on what you observe. For fields that cannot be determined, use reasonable estimates or 'unknown'. Be precise with colors (always include hex codes). The prompt_text fields should be rich, detailed, and faithful to every visual element.";
+
+const DEFAULT_JSON_PROMPT_INSTRUCTION = [
+  "You are an expert visual analyst and text-to-image prompt engineer.",
+  "Analyze the image and return ONLY valid JSON with no markdown fences or extra commentary.",
+  "Use this exact structure:",
+  "{",
+  '  "meta":{"estimated_width":0,"estimated_height":0,"aspect_ratio":"","orientation":"","category":""},',
+  '  "subject":{"description":"","position":"","relative_size":"","details":{}},',
+  '  "secondary_subjects":[{"description":"","position":"","relative_size":""}],',
+  '  "environment":{"setting":"","background":"","foreground":"","depth_of_field":"","weather":"","time_of_day":""},',
+  '  "composition":{"framing":"","camera_angle":"","shot_type":"","perspective":""},',
+  '  "camera":{"focal_length":"","aperture":"","lens_type":"","motion_blur":false},',
+  '  "lighting":{"type":"","direction":"","intensity":"","color_temperature":"","shadows":"","highlights":"","additional_lights":[]},',
+  '  "color":{"palette":[{"name":"","hex":"","role":""}],"overall_tone":"","saturation":"","contrast":""},',
+  '  "style":{"art_style":"","genre":"","influences":"","rendering_quality":""},',
+  '  "texture_and_detail":{"surface_textures":[],"material_properties":[],"fine_details":""},',
+  '  "mood":{"atmosphere":"","emotional_tone":"","narrative":""},',
+  '  "text_in_image":{"has_text":false,"content":[],"font_style":"","placement":""},',
+  '  "post_processing":{"filters":[],"vignette":false,"grain_noise":false,"color_grading":"","effects":[]},',
+  '  "negative_prompt":"",',
+  '  "tags":["","","","","","","",""],',
+  '  "prompt_text":{"en":"","zh":""}',
+  "}",
+  "Rules:",
+  "- Keep the JSON valid and preserve every top-level section above.",
+  '- Prefer direct observations. If a detail is uncertain, use a short estimate, "unknown", false, [], or {} as appropriate.',
+  "- tags must contain exactly 8 Simplified Chinese tags, each exactly 4 Chinese characters.",
+  "- prompt_text.en and prompt_text.zh must each be natural, paste-ready prompts for image generation.",
+  "- Keep values factual and compact unless later instructions ask for more detail."
+].join("\n");
+
+const PROMPT_RICHNESS_OUTPUT_BUDGETS = {
+  concise: 2560,
+  standard: 3584,
+  detailed: 5120,
+  "very-detailed": 8192
+};
+
 const DEFAULT_CONFIG = {
   llmProvider: DEFAULT_PROVIDER_ID,
   providerSettings: createDefaultProviderSettings(),
@@ -25,8 +70,7 @@ const DEFAULT_CONFIG = {
   zhipuApiKey: "",
   model: PROVIDER_DEFAULTS.gemini.model,
   zhipuModel: PROVIDER_DEFAULTS.zhipu.model,
-  promptInstruction:
-    "You are an expert visual analyst and text-to-image prompt engineer. Analyze the given image and produce a comprehensive JSON object that captures every visual detail needed to recreate this image faithfully with an AI image generator. Return ONLY a valid JSON object (no markdown fences, no commentary). The JSON must follow this schema:\n{\n  \"meta\": {\n    \"estimated_width\": <int>,\n    \"estimated_height\": <int>,\n    \"aspect_ratio\": \"<W:H>\",\n    \"orientation\": \"landscape|portrait|square\",\n    \"category\": \"portrait|landscape|product|animal|illustration|abstract|architecture|food|other\"\n  },\n  \"subject\": {\n    \"description\": \"<detailed main subject>\",\n    \"position\": \"<center|left|right|top|bottom|etc>\",\n    \"relative_size\": \"<percentage of frame>\",\n    \"details\": {}\n  },\n  \"secondary_subjects\": [ { \"description\": \"...\", \"position\": \"...\", \"relative_size\": \"...\" } ],\n  \"environment\": {\n    \"setting\": \"<indoor|outdoor|studio|abstract|etc>\",\n    \"background\": \"<detailed background description>\",\n    \"foreground\": \"<if any>\",\n    \"depth_of_field\": \"<shallow|medium|deep>\",\n    \"weather\": \"<if applicable>\",\n    \"time_of_day\": \"<if discernible>\"\n  },\n  \"composition\": {\n    \"framing\": \"<rule of thirds|centered|symmetrical|diagonal|etc>\",\n    \"camera_angle\": \"<eye level|low angle|high angle|bird's eye|worm's eye|Dutch angle|etc>\",\n    \"shot_type\": \"<close-up|medium|wide|extreme close-up|full body|etc>\",\n    \"perspective\": \"<frontal|3/4|profile|overhead|etc>\"\n  },\n  \"camera\": {\n    \"focal_length\": \"<estimated mm>\",\n    \"aperture\": \"<estimated f-stop>\",\n    \"lens_type\": \"<wide angle|standard|telephoto|macro|fisheye|tilt-shift|etc>\",\n    \"motion_blur\": false\n  },\n  \"lighting\": {\n    \"type\": \"<natural|studio|dramatic|ambient|rim|backlit|etc>\",\n    \"direction\": \"<front|side|back|top|bottom|etc>\",\n    \"intensity\": \"<soft|medium|hard>\",\n    \"color_temperature\": \"<warm|neutral|cool>\",\n    \"shadows\": \"<soft|harsh|minimal|none>\",\n    \"highlights\": \"<description if notable>\",\n    \"additional_lights\": []\n  },\n  \"color\": {\n    \"palette\": [ { \"name\": \"<descriptive name>\", \"hex\": \"#XXXXXX\", \"role\": \"<dominant|accent|background|etc>\" } ],\n    \"overall_tone\": \"<warm|cool|neutral|mixed>\",\n    \"saturation\": \"<vivid|muted|desaturated|pastel>\",\n    \"contrast\": \"<high|medium|low>\"\n  },\n  \"style\": {\n    \"art_style\": \"<photorealistic|digital art|oil painting|watercolor|3D render|anime|etc>\",\n    \"genre\": \"<if applicable>\",\n    \"influences\": \"<artist or movement references if apparent>\",\n    \"rendering_quality\": \"<8K|4K|high detail|etc>\"\n  },\n  \"texture_and_detail\": {\n    \"surface_textures\": [ \"<e.g., smooth skin, rough stone, glossy metal>\" ],\n    \"material_properties\": [ \"<e.g., translucent, reflective, matte>\" ],\n    \"fine_details\": \"<notable micro-details>\"\n  },\n  \"mood\": {\n    \"atmosphere\": \"<serene|dramatic|mysterious|joyful|melancholic|etc>\",\n    \"emotional_tone\": \"<description>\",\n    \"narrative\": \"<implied story or context if any>\"\n  },\n  \"text_in_image\": {\n    \"has_text\": false,\n    \"content\": [],\n    \"font_style\": \"\",\n    \"placement\": \"\"\n  },\n  \"post_processing\": {\n    \"filters\": [],\n    \"vignette\": false,\n    \"grain_noise\": false,\n    \"color_grading\": \"\",\n    \"effects\": []\n  },\n  \"negative_prompt\": \"<elements to explicitly AVOID to maintain fidelity>\",\n  \"tags\": [\"<exactly 8 tags, each exactly 4 Chinese characters>\"],\n  \"prompt_text\": {\n    \"en\": \"<a single flattened English natural-language prompt that combines all the above details into one paragraph, ready to paste into an image generator>\",\n    \"zh\": \"<同样内容的简体中文版本提示词，语言流畅自然，可直接用于AI图像生成>\"\n  }\n}\nFill every field based on what you observe. For fields that cannot be determined, use reasonable estimates or 'unknown'. Be precise with colors (always include hex codes). The prompt_text fields should be rich, detailed, and faithful to every visual element.",
+  promptInstruction: DEFAULT_JSON_PROMPT_INSTRUCTION,
   platformUrl: "https://chatgpt.com/?prompt={{prompt}}",
   minImageWidth: 256,
   minImageHeight: 256,
@@ -356,10 +400,12 @@ async function handleGeneratePrompt(message, sender) {
   const imageData = await getImageDataFromMessage(message);
   const languageDirective = getLanguageDirective(config.promptLanguage);
   const baseInstruction = config.promptInstruction || DEFAULT_CONFIG.promptInstruction;
-  const richnessInstruction = getRichnessInstruction(config.promptRichness);
+  const promptRichness = normalizePromptRichness(config.promptRichness);
+  const richnessInstruction = getRichnessInstruction(promptRichness);
   const instruction = richnessInstruction 
     ? `${baseInstruction}\n\n${richnessInstruction}`
     : baseInstruction;
+  const maxOutputTokens = getPromptMaxOutputTokens(promptRichness);
   const runtimeInstruction =
     typeof message.customInstruction === "string"
       ? message.customInstruction.trim()
@@ -405,6 +451,8 @@ async function handleGeneratePrompt(message, sender) {
     baseUrl: settings.baseUrl,
     model,
     instruction,
+    promptRichness,
+    maxOutputTokens,
     aspectRatio: config.aspectRatio,
     customAspectRatio: config.customAspectRatio,
     aspectInstruction,
@@ -423,7 +471,8 @@ async function handleGeneratePrompt(message, sender) {
     customInstruction,
     imageBase64: imageData.data,
     imageMimeType: imageData.mimeType,
-    altText: message.imageAlt || ""
+    altText: message.imageAlt || "",
+    maxOutputTokens
   });
 
   const trimmedPrompt = promptText.trim();
@@ -650,7 +699,8 @@ async function requestPromptFromGemini({
   languageDirective,
   imageBase64,
   imageMimeType,
-  altText
+  altText,
+  maxOutputTokens
 }) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     model
@@ -701,7 +751,7 @@ async function requestPromptFromGemini({
       topK: 32,
       topP: 0.95,
       responseMimeType: "application/json",
-      maxOutputTokens: 8192
+      maxOutputTokens: maxOutputTokens || PROMPT_RICHNESS_OUTPUT_BUDGETS["very-detailed"]
     }
   };
 
@@ -744,7 +794,8 @@ async function requestPromptFromZhipu({
   languageDirective,
   imageBase64,
   imageMimeType,
-  altText
+  altText,
+  maxOutputTokens
 }) {
   const url = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
   const textSegments = [];
@@ -792,7 +843,7 @@ async function requestPromptFromZhipu({
     ],
     temperature: 0.4,
     top_p: 0.95,
-    max_tokens: 8192
+    max_tokens: maxOutputTokens || PROMPT_RICHNESS_OUTPUT_BUDGETS["very-detailed"]
   };
 
   const response = await fetch(url, {
@@ -830,7 +881,8 @@ async function requestPromptFromCustomOpenAI({
   languageDirective,
   imageBase64,
   imageMimeType,
-  altText
+  altText,
+  maxOutputTokens
 }) {
   const url = buildOpenAICompatibleEndpoint(baseUrl);
   const systemSegments = [];
@@ -891,7 +943,7 @@ async function requestPromptFromCustomOpenAI({
     messages,
     temperature: 0.4,
     top_p: 0.95,
-    max_tokens: 8192,
+    max_tokens: maxOutputTokens || PROMPT_RICHNESS_OUTPUT_BUDGETS["very-detailed"],
     response_format: { type: "json_object" }
   };
 
@@ -1806,10 +1858,10 @@ function sanitizeConfig(raw) {
   merged.enableCustomPromptInput = merged.enableCustomPromptInput === true;
   merged.removeWatermark = raw?.removeWatermark === true;
 
-  // Auto-migrate: replace legacy promptInstruction with new JSON-based default
+  // Auto-migrate: replace legacy promptInstruction defaults with the optimized JSON default
   const LEGACY_INSTRUCTIONS = [
-    "You are an assistant that writes high quality text-to-image prompts. Provide a single prompt that can recreate the given image faithfully.",
-    "You are an assistant that writes high quality text-to-image prompts.",
+    ...LEGACY_SIMPLE_PROMPT_INSTRUCTIONS,
+    PREVIOUS_VERBOSE_JSON_PROMPT_INSTRUCTION
   ];
   if (
     typeof merged.promptInstruction === "string" &&
@@ -1939,12 +1991,24 @@ function getPromptLanguageName(code) {
 function getRichnessInstruction(richness) {
   const normalized = normalizePromptRichness(richness);
   const instructions = {
-    "concise": "In the JSON output, keep descriptions brief and focus on the most essential visual elements. Omit minor or uncertain details. The prompt_text fields should be concise (1-2 sentences).",
-    "standard": "In the JSON output, provide balanced detail across all fields. Include all clearly observable visual elements, colors, and composition. The prompt_text fields should be moderately detailed (2-3 sentences).",
-    "detailed": "In the JSON output, provide comprehensive descriptions for every field. Include precise colors with hex codes, detailed lighting analysis, textures, materials, and spatial relationships. The prompt_text fields should be richly detailed (3-5 sentences).",
-    "very-detailed": "In the JSON output, be exhaustive in every field. Describe all colors with exact hex codes, analyze every light source and shadow, identify every texture and material, map precise spatial relationships and proportions, note subtle gradients and transitions. The prompt_text fields should be extremely thorough and descriptive (5-8 sentences), capturing every nuance needed for pixel-perfect recreation."
+    concise:
+      'Prioritize only the most recreation-critical details. Keep field values short. You may leave secondary_subjects empty and use "unknown" for uncertain camera, post_processing, or fine-detail fields instead of guessing. Limit color.palette to 1-3 key colors. Keep prompt_text.en and prompt_text.zh to 1-2 compact sentences.',
+    standard:
+      "Provide balanced detail across the JSON. Fill clearly observable fields, but keep uncertain fields brief. Include 3-5 key colors, the main lighting setup, and the most important composition cues. Keep prompt_text.en and prompt_text.zh to 2-3 sentences.",
+    detailed:
+      "Provide comprehensive detail for the major fields. Describe key materials, textures, lighting direction, notable shadows, and spatial relationships. Include 4-6 colors with hex values for the most visible tones. Keep prompt_text.en and prompt_text.zh to 3-5 sentences.",
+    "very-detailed":
+      'Be exhaustive in every field. Fill every field based on what you observe; when something cannot be determined, use a reasonable estimate or "unknown". Describe all notable colors with precise hex codes, analyze every visible light source and shadow, identify textures and materials, map spatial relationships and proportions, and capture subtle gradients and transitions. Keep prompt_text.en and prompt_text.zh extremely thorough (5-8 sentences), preserving the current maximum level of fidelity.'
   };
   return instructions[normalized] || instructions["standard"];
+}
+
+function getPromptMaxOutputTokens(richness) {
+  const normalized = normalizePromptRichness(richness);
+  return (
+    PROMPT_RICHNESS_OUTPUT_BUDGETS[normalized] ||
+    PROMPT_RICHNESS_OUTPUT_BUDGETS[DEFAULT_CONFIG.promptRichness]
+  );
 }
 
 function normalizePromptRichness(value) {
