@@ -3,18 +3,29 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
 
   const DEFAULT_CONFIG = {
     platformUrl: "https://chatgpt.com/?prompt={{prompt}}",
-    language: "en",
+    language: "zh",
+    theme: "dark",
     autoOpenPlatform: true,
     enableCustomPromptInput: false,
-    domainFilters: []
+    domainFilters: [],
+    promptRichness: "standard"
   };
 
   const CUSTOM_DIALOG_BACKDROP_CLASS = "i2p-dialog-backdrop";
   const CURRENT_HOSTNAME = normalizeHostname(window.location.hostname || "");
+  const HISTORY_STORAGE_KEY = "generationHistory";
+  const SIDE_PANEL_POSITION_KEY = "sidePanelHandleTop";
+  const SIDE_HISTORY_LIMIT = 10;
   const PANEL_LANGUAGES = [
     { id: "zh", label: "中" },
     { id: "en", label: "EN" },
     { id: "json", label: "JSON", compact: true }
+  ];
+  const PROMPT_RICHNESS_OPTIONS = [
+    { id: "concise", labelEn: "Concise", labelZh: "简洁" },
+    { id: "standard", labelEn: "Standard", labelZh: "标准" },
+    { id: "detailed", labelEn: "Detailed", labelZh: "详细" },
+    { id: "very-detailed", labelEn: "Very", labelZh: "极致" }
   ];
 
   const UI_STRINGS = {
@@ -39,7 +50,24 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
       customInputCancel: "Cancel",
       blocked: "Prompt generation is disabled on this domain.",
       emptyPrompt: "The provider returned an empty prompt.",
-      unknownError: "Unknown error."
+      unknownError: "Unknown error.",
+      sideQuickTitle: "Quick controls",
+      sideQuickSubtitle: "Adjust core settings without leaving the page.",
+      sideRichnessLabel: "Analysis depth",
+      sideViewHistoryButton: "View history",
+      sideHistoryTitle: "Generation History",
+      sideHistorySubtitle: "Recent 10 generations",
+      sideHistoryEmptyTitle: "No history yet",
+      sideHistoryEmptyDescription: "Generate a prompt once and your recent records will appear here.",
+      sideHistoryBack: "Back",
+      sideHistoryOpen: "Open",
+      sideHistoryDelete: "Delete",
+      sideHistoryModel: "Model",
+      sideHistoryPlatform: "Platform",
+      sideHistoryGenerated: "Generated",
+      sideHistoryLatest: "Latest",
+      sideHistoryCopySuccess: "History prompt copied.",
+      sideHistoryDeleteSuccess: "History entry removed."
     },
     zh: {
       eyebrow: "IMAGETOPROMPT",
@@ -60,16 +88,42 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
       customInputCancel: "取消",
       blocked: "当前域名已被设置为不生成提示词。",
       emptyPrompt: "模型没有返回提示词。",
-      unknownError: "未知错误。"
+      unknownError: "未知错误。",
+      sideQuickTitle: "快捷面板",
+      sideQuickSubtitle: "不用离开页面，直接调整常用设置。",
+      sideRichnessLabel: "分析程度",
+      sideViewHistoryButton: "查看历史",
+      sideHistoryTitle: "生成历史",
+      sideHistorySubtitle: "最近 10 条记录",
+      sideHistoryEmptyTitle: "还没有历史记录",
+      sideHistoryEmptyDescription: "先生成一次提示词，最近记录就会显示在这里。",
+      sideHistoryBack: "返回",
+      sideHistoryOpen: "打开",
+      sideHistoryDelete: "删除",
+      sideHistoryModel: "模型",
+      sideHistoryPlatform: "平台",
+      sideHistoryGenerated: "生成时间",
+      sideHistoryLatest: "最近一次",
+      sideHistoryCopySuccess: "历史提示词已复制。",
+      sideHistoryDeleteSuccess: "历史记录已删除。"
     }
   };
 
   let config = { ...DEFAULT_CONFIG };
   let panelRefs = null;
   let panelState = null;
+  let sidePanelRefs = null;
+  let sidePanelState = {
+    quickOpen: false,
+    historyOpen: false,
+    historyEntries: [],
+    historyLocales: {},
+    handleTop: null
+  };
   let lastContextAnchor = null;
   let panelDismissBound = false;
   let panelDragState = null;
+  let sideHandleDragState = null;
   let loadingTickerId = 0;
   let panelGeneration = 0;
   let crossfadeTimerId = 0;
@@ -80,14 +134,21 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
 
   async function init() {
     await loadConfig();
+    await loadSideHistory();
+    await loadSidePanelPreferences();
     watchForConfigChanges();
+    watchForHistoryChanges();
     document.addEventListener("contextmenu", handleContextMenuCapture, true);
     window.addEventListener("resize", () => {
       if (isPanelVisible()) {
         queuePanelPosition(panelState?.anchor);
       }
+      sidePanelState.handleTop = clampSideHandleTop(getSideHandleTop());
+      renderSidePanel();
     });
     setupRuntimeListener();
+    ensureSidePanel();
+    renderSidePanel();
   }
 
   function setupRuntimeListener() {
@@ -300,6 +361,13 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     };
   }
 
+  function applyPanelTheme() {
+    const isLight = config.theme === "light";
+    if (panelRefs?.root) {
+      panelRefs.root.classList.toggle("i2p-theme-light", isLight);
+    }
+  }
+
   function showLoadingPanel(anchor) {
     const refs = ensurePanel();
     panelGeneration++;
@@ -329,6 +397,7 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     });
 
     panelState = { anchor };
+    applyPanelTheme();
     startFakeLoadingProgress();
     bindPanelDismissHandlers();
     queuePanelPosition(anchor);
@@ -338,6 +407,7 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     const refs = ensurePanel();
     panelGeneration++;
     panelState = inheritManualPosition(nextState);
+    applyPanelTheme();
     refs.root.dataset.state = "result";
     refs.eyebrow.textContent = getUiString("eyebrow");
     refs.title.textContent = getUiString("resultTitle");
@@ -566,6 +636,7 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     const refs = ensurePanel();
     panelGeneration++;
     const anchor = panelState?.anchor || getFallbackAnchor();
+    applyPanelTheme();
     refs.root.dataset.state = "error";
     refs.eyebrow.textContent = getUiString("eyebrow");
     refs.title.textContent = getUiString("errorTitle");
@@ -913,11 +984,17 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     ) {
       return;
     }
+    if (isEventInsideSidePanel(event.target)) {
+      return;
+    }
     hidePanel();
   }
 
   function handleDocumentKeydown(event) {
     if (event.key === "Escape" && !document.querySelector(`.${CUSTOM_DIALOG_BACKDROP_CLASS}`)) {
+      if (isSidePanelOpen()) {
+        closeSidePanels();
+      }
       hidePanel();
     }
   }
@@ -1030,6 +1107,9 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
 
       const backdrop = document.createElement("div");
       backdrop.className = CUSTOM_DIALOG_BACKDROP_CLASS;
+      if (config.theme === "light") {
+        backdrop.classList.add("i2p-theme-light");
+      }
 
       const dialog = document.createElement("div");
       dialog.className = "i2p-dialog";
@@ -1194,6 +1274,7 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
         }
         config[key] = change.newValue ?? DEFAULT_CONFIG[key];
       }
+      renderSidePanel();
     });
   }
 
@@ -1206,28 +1287,895 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     return UI_STRINGS[language]?.[key] ?? UI_STRINGS.en[key] ?? "";
   }
 
+  function getPromptRichnessLabel(value) {
+    const option = PROMPT_RICHNESS_OPTIONS.find((entry) => entry.id === value);
+    if (!option) {
+      return value;
+    }
+    return getUiLanguage() === "zh" ? option.labelZh : option.labelEn;
+  }
+
+  function setUiLanguage(nextLanguage) {
+    const normalized = nextLanguage === "zh" ? "zh" : "en";
+    config.language = normalized;
+    renderSidePanel();
+    if (isPanelVisible()) {
+      renderPanelBody();
+    }
+    chrome.storage.sync.set({ language: normalized }, () => {
+      if (chrome.runtime.lastError) {
+        console.warn("[Image2Prompt] Unable to update UI language:", chrome.runtime.lastError);
+      }
+    });
+  }
+
+  function toggleTheme() {
+    const nextTheme = config.theme === "light" ? "dark" : "light";
+    config.theme = nextTheme;
+    renderSidePanel();
+    applyPanelTheme();
+    chrome.storage.sync.set({ theme: nextTheme }, () => {
+      if (chrome.runtime.lastError) {
+        console.warn("[Image2Prompt] Unable to update theme:", chrome.runtime.lastError);
+      }
+    });
+  }
+
+  function buildUiLanguageToggle() {
+    const group = document.createElement("div");
+    group.className = "i2p-side-lang";
+
+    const langButton = document.createElement("button");
+    langButton.type = "button";
+    langButton.className = "i2p-side-lang__button";
+    langButton.dataset.i2pSideAction = "toggle-lang";
+    langButton.textContent = getUiLanguage() === "zh" ? "中" : "EN";
+    group.appendChild(langButton);
+
+    const themeButton = document.createElement("button");
+    themeButton.type = "button";
+    themeButton.className = "i2p-side-lang__button";
+    themeButton.dataset.i2pSideAction = "toggle-theme";
+    themeButton.textContent = config.theme === "light" ? "\u2600" : "\u263E";
+    group.appendChild(themeButton);
+
+    return group;
+  }
+
+  function loadSideHistory() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get({ [HISTORY_STORAGE_KEY]: [] }, (items) => {
+        if (chrome.runtime.lastError) {
+          console.warn("[Image2Prompt] Unable to load side history:", chrome.runtime.lastError);
+          resolve();
+          return;
+        }
+        const list = items?.[HISTORY_STORAGE_KEY];
+        sidePanelState.historyEntries = Array.isArray(list)
+          ? list.map(normalizeSideHistoryEntry).filter(Boolean)
+          : [];
+        syncHistoryLocaleState();
+        resolve();
+      });
+    });
+  }
+
+  function loadSidePanelPreferences() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get({ [SIDE_PANEL_POSITION_KEY]: null }, (items) => {
+        if (chrome.runtime.lastError) {
+          console.warn(
+            "[Image2Prompt] Unable to load side panel position:",
+            chrome.runtime.lastError
+          );
+          sidePanelState.handleTop = getDefaultSideHandleTop();
+          resolve();
+          return;
+        }
+        sidePanelState.handleTop = clampSideHandleTop(items?.[SIDE_PANEL_POSITION_KEY]);
+        resolve();
+      });
+    });
+  }
+
+  function watchForHistoryChanges() {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== "local" || !(HISTORY_STORAGE_KEY in changes)) {
+        return;
+      }
+      const updated = changes[HISTORY_STORAGE_KEY]?.newValue;
+      sidePanelState.historyEntries = Array.isArray(updated)
+        ? updated.map(normalizeSideHistoryEntry).filter(Boolean)
+        : [];
+      syncHistoryLocaleState();
+      renderSidePanel();
+    });
+  }
+
+  function syncHistoryLocaleState() {
+    const nextLocales = {};
+    sidePanelState.historyEntries.forEach((entry) => {
+      const previous = sidePanelState.historyLocales?.[entry.id];
+      nextLocales[entry.id] =
+        previous && PANEL_LANGUAGES.some((lang) => lang.id === previous)
+          ? previous
+          : getDefaultPanelLocale(entry.translations);
+    });
+    sidePanelState.historyLocales = nextLocales;
+  }
+
+  function normalizeSideHistoryEntry(entry) {
+    if (!entry) {
+      return null;
+    }
+
+    const prompt = typeof entry.prompt === "string" ? entry.prompt.trim() : "";
+    if (!prompt) {
+      return null;
+    }
+
+    const id = entry.id || `hist-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const parsed = parseJsonObjectFromText(prompt);
+    const promptText =
+      parsed && typeof parsed.prompt_text === "object" ? parsed.prompt_text : null;
+    const translations = {
+      zh: typeof promptText?.zh === "string" ? promptText.zh.trim() : "",
+      en: typeof promptText?.en === "string" ? promptText.en.trim() : ""
+    };
+    const tags = normalizePanelTags(parsed?.tags);
+    const model = typeof entry.model === "string" ? entry.model.trim() : "";
+    const platformName = typeof entry.platformName === "string" ? entry.platformName.trim() : "";
+    const platformUrl = typeof entry.platformUrl === "string" ? entry.platformUrl.trim() : "";
+
+    return {
+      id,
+      prompt,
+      translations,
+      tags,
+      model,
+      provider: typeof entry.provider === "string" ? entry.provider.trim() : "",
+      providerId: typeof entry.providerId === "string" ? entry.providerId.trim() : "",
+      platformName: platformName || platformUrl,
+      platformId: typeof entry.platformId === "string" ? entry.platformId.trim() : "",
+      platformUrl,
+      imageDataUrl: typeof entry.imageDataUrl === "string" ? entry.imageDataUrl : "",
+      imageAlt: typeof entry.imageAlt === "string" ? entry.imageAlt : "",
+      createdAt: Number(entry.createdAt) || Date.now(),
+      customInstruction:
+        typeof entry.customInstruction === "string" ? entry.customInstruction.trim() : ""
+    };
+  }
+
+  function getRecentSideHistoryEntries(limit = SIDE_HISTORY_LIMIT) {
+    return [...sidePanelState.historyEntries]
+      .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))
+      .slice(0, limit);
+  }
+
+  function formatSideHistoryTimestamp(timestamp) {
+    const date = timestamp ? new Date(Number(timestamp)) : new Date();
+    try {
+      return new Intl.DateTimeFormat(getUiLanguage() === "zh" ? "zh-CN" : "en-US", {
+        month: "short",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit"
+      }).format(date);
+    } catch (error) {
+      return date.toLocaleString();
+    }
+  }
+
+  function getDefaultSideHandleTop() {
+    return Math.round(window.innerHeight * 0.32);
+  }
+
+  function clampSideHandleTop(value) {
+    const minTop = 104;
+    const maxTop = Math.max(minTop, window.innerHeight - 120);
+    const numeric = Number(value);
+    const fallback = getDefaultSideHandleTop();
+    const safeValue = Number.isFinite(numeric) ? Math.round(numeric) : fallback;
+    return Math.min(Math.max(minTop, safeValue), maxTop);
+  }
+
+  function getSideHandleTop() {
+    return clampSideHandleTop(sidePanelState.handleTop);
+  }
+
+  function persistSideHandleTop(nextTop) {
+    const safeTop = clampSideHandleTop(nextTop);
+    sidePanelState.handleTop = safeTop;
+    chrome.storage.local.set({ [SIDE_PANEL_POSITION_KEY]: safeTop }, () => {
+      if (chrome.runtime.lastError) {
+        console.warn(
+          "[Image2Prompt] Unable to persist side panel position:",
+          chrome.runtime.lastError
+        );
+      }
+    });
+  }
+
+  function clampSideCardTop(top, height) {
+    const margin = 18;
+    const safeHeight = Math.max(80, Number(height) || 0);
+    return Math.min(
+      Math.max(margin, Math.round(top)),
+      Math.max(margin, window.innerHeight - safeHeight - margin)
+    );
+  }
+
+  function applySidePanelLayout() {
+    const refs = ensureSidePanel();
+    const handleTop = getSideHandleTop();
+    refs.handle.style.top = `${handleTop}px`;
+
+    const quickHeight = refs.quick.hidden ? 150 : refs.quick.offsetHeight || 150;
+    const historyHeight = refs.history.hidden
+      ? Math.min(window.innerHeight - 36, 640)
+      : refs.history.offsetHeight || Math.min(window.innerHeight - 36, 640);
+
+    refs.quick.style.top = `${clampSideCardTop(handleTop + 34, quickHeight)}px`;
+    refs.history.style.top = `${clampSideCardTop(handleTop - 56, historyHeight)}px`;
+  }
+
+  function scheduleSidePanelLayout() {
+    applySidePanelLayout();
+    window.requestAnimationFrame(() => {
+      if (!sidePanelRefs?.handle?.isConnected) {
+        return;
+      }
+      applySidePanelLayout();
+    });
+  }
+
+  function toggleSideQuickPanel() {
+    if (sidePanelState.quickOpen || sidePanelState.historyOpen) {
+      closeSidePanels();
+      return;
+    }
+    sidePanelState.quickOpen = true;
+    sidePanelState.historyOpen = false;
+    renderSidePanel();
+  }
+
+  let sideHandleWasDragged = false;
+
+  function isPointerInsideElement(event, element) {
+    if (!element || !element.isConnected) {
+      return false;
+    }
+    const rect = element.getBoundingClientRect();
+    return (
+      event.clientX >= rect.left &&
+      event.clientX <= rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.bottom
+    );
+  }
+
+  function handleDocumentPointerDownForSide(event) {
+    if (event.button !== 0 || !sidePanelRefs?.handle) {
+      return;
+    }
+
+    // Check handle hit
+    if (isPointerInsideElement(event, sidePanelRefs.handle)) {
+      event.stopPropagation();
+      sideHandleWasDragged = false;
+      sideHandleDragState = {
+        startY: event.clientY,
+        startX: event.clientX,
+        startTop: getSideHandleTop(),
+        moved: false
+      };
+      document.addEventListener("mousemove", handleSideHandleMouseMove, true);
+      document.addEventListener("mouseup", handleSideHandleMouseUp, true);
+      return;
+    }
+
+    // Check if inside quick/history panels
+    if (
+      isPointerInsideElement(event, sidePanelRefs.quick) ||
+      isPointerInsideElement(event, sidePanelRefs.history)
+    ) {
+      return;
+    }
+
+    // Click outside everything → close panels
+    if (isSidePanelOpen()) {
+      closeSidePanels();
+    }
+  }
+
+  function handleDocumentClickForSide(event) {
+    if (event.button !== 0 || !sidePanelRefs?.handle) {
+      return;
+    }
+
+    // Check handle hit
+    if (isPointerInsideElement(event, sidePanelRefs.handle)) {
+      event.stopPropagation();
+      event.preventDefault();
+      if (sideHandleWasDragged) {
+        sideHandleWasDragged = false;
+        return;
+      }
+      toggleSideQuickPanel();
+      return;
+    }
+
+    // Check if inside quick/history panels → delegate to panel interaction
+    const quickVisible = sidePanelState.quickOpen && sidePanelRefs.quick;
+    const historyVisible = sidePanelState.historyOpen && sidePanelRefs.history;
+
+    if (quickVisible && isPointerInsideElement(event, sidePanelRefs.quick)) {
+      handleSidePanelInteraction(event);
+      return;
+    }
+    if (historyVisible && isPointerInsideElement(event, sidePanelRefs.history)) {
+      handleSidePanelInteraction(event);
+      return;
+    }
+  }
+
+  function handleSideHandleMouseMove(event) {
+    if (!sideHandleDragState) {
+      return;
+    }
+    const deltaY = event.clientY - sideHandleDragState.startY;
+    const deltaX = event.clientX - sideHandleDragState.startX;
+    if (Math.abs(deltaY) > 4 || Math.abs(deltaX) > 4) {
+      sideHandleDragState.moved = true;
+      sideHandleWasDragged = true;
+    }
+    if (sideHandleDragState.moved) {
+      sidePanelState.handleTop = clampSideHandleTop(sideHandleDragState.startTop + deltaY);
+      applySidePanelLayout();
+    }
+  }
+
+  function clearSideHandleDragState() {
+    sideHandleDragState = null;
+    document.removeEventListener("mousemove", handleSideHandleMouseMove, true);
+    document.removeEventListener("mouseup", handleSideHandleMouseUp, true);
+  }
+
+  function handleSideHandleMouseUp() {
+    if (!sideHandleDragState) {
+      return;
+    }
+    if (sideHandleDragState.moved) {
+      persistSideHandleTop(getSideHandleTop());
+      scheduleSidePanelLayout();
+    }
+    clearSideHandleDragState();
+  }
+
+  function getSideHistoryEntryById(entryId) {
+    return sidePanelState.historyEntries.find((entry) => entry.id === entryId) || null;
+  }
+
+  async function handleSidePanelInteraction(event) {
+    if ("button" in event && event.button !== 0) {
+      return;
+    }
+
+    // Find the actual target inside our panel using coordinates,
+    // because event.target may be an overlapping page element
+    const panelEl = sidePanelState.quickOpen
+      ? sidePanelRefs?.quick
+      : sidePanelState.historyOpen
+        ? sidePanelRefs?.history
+        : null;
+    if (!panelEl) {
+      return;
+    }
+
+    let target = null;
+    const elementsAtPoint = document.elementsFromPoint(event.clientX, event.clientY);
+    for (const el of elementsAtPoint) {
+      if (panelEl.contains(el)) {
+        target = el;
+        break;
+      }
+    }
+    if (!target) {
+      return;
+    }
+
+    const richnessButton = target.closest("[data-i2p-side-richness]");
+    if (richnessButton instanceof HTMLElement) {
+      event.preventDefault();
+      event.stopPropagation();
+      const nextRichness = richnessButton.dataset.i2pSideRichness;
+      if (!nextRichness || config.promptRichness === nextRichness) {
+        return;
+      }
+      config.promptRichness = nextRichness;
+      renderSidePanel();
+      chrome.storage.sync.set({ promptRichness: nextRichness }, () => {
+        if (chrome.runtime.lastError) {
+          console.warn("[Image2Prompt] Unable to update prompt richness:", chrome.runtime.lastError);
+        }
+      });
+      return;
+    }
+
+    const sideActionButton = target.closest("[data-i2p-side-action]");
+    if (sideActionButton instanceof HTMLElement) {
+      event.preventDefault();
+      event.stopPropagation();
+      const action = sideActionButton.dataset.i2pSideAction;
+      if (action === "view-history") {
+        sidePanelState.quickOpen = false;
+        sidePanelState.historyOpen = true;
+        renderSidePanel();
+      } else if (action === "back-history") {
+        sidePanelState.quickOpen = true;
+        sidePanelState.historyOpen = false;
+        renderSidePanel();
+      } else if (action === "toggle-lang") {
+        const nextLang = getUiLanguage() === "zh" ? "en" : "zh";
+        setUiLanguage(nextLang);
+      } else if (action === "toggle-theme") {
+        toggleTheme();
+      }
+      return;
+    }
+
+    const historyLocaleButton = target.closest("[data-i2p-history-locale]");
+    if (historyLocaleButton instanceof HTMLElement) {
+      event.preventDefault();
+      event.stopPropagation();
+      const entryId = historyLocaleButton.dataset.i2pEntryId;
+      const locale = historyLocaleButton.dataset.i2pHistoryLocale;
+      if (!entryId || !locale) {
+        return;
+      }
+      sidePanelState.historyLocales[entryId] = locale;
+      renderSideHistoryPanel();
+      return;
+    }
+
+    const historyActionButton = target.closest("[data-i2p-history-action]");
+    if (historyActionButton instanceof HTMLElement) {
+      event.preventDefault();
+      event.stopPropagation();
+      const entryId = historyActionButton.dataset.i2pEntryId;
+      const action = historyActionButton.dataset.i2pHistoryAction;
+      if (!entryId || !action) {
+        return;
+      }
+      const entry = getSideHistoryEntryById(entryId);
+      if (!entry) {
+        return;
+      }
+      const actionLocale = getHistoryEntryLocale(entry);
+      if (action === "copy") {
+        try {
+          await copyToClipboard(getHistoryEntryDisplayText(entry, actionLocale));
+        } catch (error) {
+          console.warn("[Image2Prompt] Unable to copy history entry:", error);
+        }
+        return;
+      }
+      if (action === "open") {
+        const promptText = getHistoryEntryDisplayText(entry, actionLocale);
+        const shouldAutofill = shouldAutofillForPlatform(entry.platformId, entry.platformUrl);
+        const launchUrl = buildPlatformLaunchUrlFromTemplate(
+          entry.platformUrl || config.platformUrl,
+          promptText,
+          shouldAutofill
+        );
+        if (!launchUrl) {
+          return;
+        }
+        await tryCopyToClipboard(promptText);
+        await sendRuntimeMessage({
+          type: "openPlatform",
+          url: launchUrl,
+          prompt: promptText,
+          shouldAutofill
+        });
+        return;
+      }
+      if (action === "delete") {
+        deleteHistoryEntry(entry.id);
+      }
+    }
+  }
+
+  function ensureSidePanel() {
+    if (sidePanelRefs?.handle?.isConnected) {
+      return sidePanelRefs;
+    }
+
+    console.log("[Image2Prompt] ensureSidePanel: creating, using document-level capture handlers");
+
+    const root = document.createElement("div");
+    root.className = "i2p-side-root";
+
+    const handle = document.createElement("button");
+    handle.type = "button";
+    handle.className = "i2p-side-handle";
+    handle.setAttribute("aria-label", "Toggle image2prompt quick panel");
+    handle.innerHTML = '<span class="i2p-side-handle__chevron">‹</span>';
+    handle.draggable = false;
+    handle.addEventListener("dragstart", (event) => {
+      event.preventDefault();
+    });
+
+    const quick = document.createElement("section");
+    quick.className = "i2p-side-card i2p-side-card--quick";
+    quick.hidden = true;
+
+    const history = document.createElement("section");
+    history.className = "i2p-side-card i2p-side-card--history";
+    history.hidden = true;
+
+    const parent = document.body || document.documentElement;
+    parent.append(handle, quick, history);
+
+    // Register all side panel events at document level (capture phase)
+    // to bypass any page elements covering our UI
+    document.addEventListener("mousedown", handleDocumentPointerDownForSide, true);
+    document.addEventListener("click", handleDocumentClickForSide, true);
+
+    sidePanelRefs = { root, handle, quick, history };
+    return sidePanelRefs;
+  }
+
+  function renderSidePanel() {
+    const refs = ensureSidePanel();
+    const isOpening = sidePanelState.quickOpen || sidePanelState.historyOpen;
+    refs.handle.classList.toggle("is-open", isOpening);
+
+    const isLight = config.theme === "light";
+    refs.handle.classList.toggle("i2p-theme-light", isLight);
+    refs.quick.classList.toggle("i2p-theme-light", isLight);
+    refs.history.classList.toggle("i2p-theme-light", isLight);
+
+    if (sidePanelState.quickOpen) {
+      refs.quick.hidden = false;
+      refs.history.hidden = true;
+      refs.history.classList.remove("is-visible");
+      requestAnimationFrame(() => {
+        refs.quick.classList.add("is-visible");
+      });
+    } else if (sidePanelState.historyOpen) {
+      refs.history.hidden = false;
+      refs.quick.hidden = true;
+      refs.quick.classList.remove("is-visible");
+      requestAnimationFrame(() => {
+        refs.history.classList.add("is-visible");
+      });
+    } else {
+      refs.quick.classList.remove("is-visible");
+      refs.history.classList.remove("is-visible");
+      refs.quick.hidden = true;
+      refs.history.hidden = true;
+    }
+
+    renderSideQuickPanel();
+    renderSideHistoryPanel();
+    scheduleSidePanelLayout();
+  }
+
+  function renderSideQuickPanel() {
+    const refs = ensureSidePanel();
+    refs.quick.innerHTML = "";
+
+    const top = document.createElement("div");
+    top.className = "i2p-side-quick__top";
+
+    const label = document.createElement("div");
+    label.className = "i2p-side-quick__label";
+    label.textContent = getUiString("sideRichnessLabel");
+
+    const langToggle = buildUiLanguageToggle();
+    top.append(label, langToggle);
+
+    const section = document.createElement("section");
+    section.className = "i2p-side-section";
+
+    const richnessGrid = document.createElement("div");
+    richnessGrid.className = "i2p-side-richness";
+    PROMPT_RICHNESS_OPTIONS.forEach((entry) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "i2p-side-richness__button";
+      button.dataset.i2pSideRichness = entry.id;
+      button.textContent = getPromptRichnessLabel(entry.id);
+      if (config.promptRichness === entry.id) {
+        button.classList.add("is-active");
+      }
+      richnessGrid.appendChild(button);
+    });
+
+    section.appendChild(richnessGrid);
+
+    const historyButton = document.createElement("button");
+    historyButton.type = "button";
+    historyButton.className = "i2p-side-primary";
+    historyButton.dataset.i2pSideAction = "view-history";
+    historyButton.textContent = getUiString("sideViewHistoryButton");
+
+    refs.quick.append(top, section, historyButton);
+  }
+
+  function renderSideHistoryPanel() {
+    const refs = ensureSidePanel();
+    const entries = getRecentSideHistoryEntries();
+    const prevList = refs.history.querySelector(".i2p-side-history__list");
+    const savedScrollTop = prevList ? prevList.scrollTop : 0;
+    refs.history.innerHTML = "";
+
+    const header = document.createElement("div");
+    header.className = "i2p-side-history__header";
+
+    const backButton = document.createElement("button");
+    backButton.type = "button";
+    backButton.className = "i2p-side-history__back";
+    backButton.dataset.i2pSideAction = "back-history";
+    backButton.textContent = "‹";
+    backButton.setAttribute("aria-label", getUiString("sideHistoryBack"));
+
+    const titleGroup = document.createElement("div");
+    titleGroup.className = "i2p-side-history__title-group";
+
+    const title = document.createElement("h4");
+    title.className = "i2p-side-card__title";
+    title.textContent = getUiString("sideHistoryTitle");
+
+    const subtitle = document.createElement("p");
+    subtitle.className = "i2p-side-card__subtitle";
+    subtitle.textContent = getUiString("sideHistorySubtitle");
+
+    const controls = document.createElement("div");
+    controls.className = "i2p-side-history__controls";
+    controls.appendChild(buildUiLanguageToggle());
+
+    titleGroup.append(title, subtitle);
+    header.append(backButton, titleGroup, controls);
+    refs.history.appendChild(header);
+
+    if (!entries.length) {
+      const empty = document.createElement("div");
+      empty.className = "i2p-side-empty";
+      const emptyTitle = document.createElement("div");
+      emptyTitle.className = "i2p-side-empty__title";
+      emptyTitle.textContent = getUiString("sideHistoryEmptyTitle");
+      const emptyDesc = document.createElement("div");
+      emptyDesc.className = "i2p-side-empty__description";
+      emptyDesc.textContent = getUiString("sideHistoryEmptyDescription");
+      empty.append(emptyTitle, emptyDesc);
+      refs.history.appendChild(empty);
+      return;
+    }
+
+    const list = document.createElement("div");
+    list.className = "i2p-side-history__list";
+    entries.forEach((entry) => {
+      list.appendChild(buildHistoryEntryCard(entry));
+    });
+    refs.history.appendChild(list);
+    list.scrollTop = savedScrollTop;
+  }
+
+  function buildHistoryEntryCard(entry) {
+    const card = document.createElement("article");
+    card.className = "i2p-history-card";
+    card.dataset.entryId = entry.id;
+
+    const top = document.createElement("div");
+    top.className = "i2p-history-card__top";
+
+    const preview = document.createElement("div");
+    preview.className = "i2p-history-card__preview";
+    if (entry.imageDataUrl) {
+      const img = document.createElement("img");
+      img.src = entry.imageDataUrl;
+      img.alt = entry.imageAlt || getUiString("sideHistoryTitle");
+      img.loading = "lazy";
+      img.decoding = "async";
+      preview.appendChild(img);
+    } else {
+      const placeholder = document.createElement("div");
+      placeholder.className = "i2p-history-card__placeholder";
+      placeholder.textContent = "IMG";
+      preview.appendChild(placeholder);
+    }
+
+    const meta = document.createElement("div");
+    meta.className = "i2p-history-card__meta";
+
+    const metaTop = document.createElement("div");
+    metaTop.className = "i2p-history-card__meta-top";
+
+    const time = document.createElement("div");
+    time.className = "i2p-history-card__time";
+    time.textContent = `${getUiString("sideHistoryGenerated")} · ${formatSideHistoryTimestamp(entry.createdAt)}`;
+
+    const badges = document.createElement("div");
+    badges.className = "i2p-history-card__badges";
+    if (entry.model) {
+      const modelBadge = document.createElement("span");
+      modelBadge.className = "i2p-history-card__badge";
+      modelBadge.textContent = `${getUiString("sideHistoryModel")} · ${entry.model}`;
+      badges.appendChild(modelBadge);
+    }
+    if (entry.platformName) {
+      const platformBadge = document.createElement("span");
+      platformBadge.className = "i2p-history-card__badge";
+      platformBadge.textContent = `${getUiString("sideHistoryPlatform")} · ${entry.platformName}`;
+      badges.appendChild(platformBadge);
+    }
+
+    metaTop.append(time, badges);
+
+    if (entry.customInstruction) {
+      const custom = document.createElement("div");
+      custom.className = "i2p-history-card__custom";
+      custom.textContent = entry.customInstruction;
+      meta.append(metaTop, custom);
+    } else {
+      meta.appendChild(metaTop);
+    }
+
+    top.append(preview, meta);
+
+    const toolbar = document.createElement("div");
+    toolbar.className = "i2p-history-card__toolbar";
+
+    const locales = document.createElement("div");
+    locales.className = "i2p-history-card__locales";
+    const currentLocale = getHistoryEntryLocale(entry);
+    PANEL_LANGUAGES.forEach((lang) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "i2p-history-card__locale";
+      button.dataset.i2pEntryId = entry.id;
+      button.dataset.i2pHistoryLocale = lang.id;
+      if (lang.compact) {
+        button.classList.add("i2p-history-card__locale--compact");
+      }
+      if (lang.id === currentLocale) {
+        button.classList.add("is-active");
+      }
+      button.textContent = lang.label;
+      locales.appendChild(button);
+    });
+
+    const actions = document.createElement("div");
+    actions.className = "i2p-history-card__actions";
+    const actionLocale = getHistoryEntryLocale(entry);
+
+    const copyButton = document.createElement("button");
+    copyButton.type = "button";
+    copyButton.className = "i2p-history-card__action";
+    copyButton.dataset.i2pEntryId = entry.id;
+    copyButton.dataset.i2pHistoryAction = "copy";
+    copyButton.textContent = getUiString("copyButton");
+
+    const openButton = document.createElement("button");
+    openButton.type = "button";
+    openButton.className = "i2p-history-card__action i2p-history-card__action--secondary";
+    openButton.dataset.i2pEntryId = entry.id;
+    openButton.dataset.i2pHistoryAction = "open";
+    openButton.textContent = getUiString("sideHistoryOpen");
+
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "i2p-history-card__action i2p-history-card__action--ghost";
+    deleteButton.dataset.i2pEntryId = entry.id;
+    deleteButton.dataset.i2pHistoryAction = "delete";
+    deleteButton.textContent = getUiString("sideHistoryDelete");
+
+    actions.append(copyButton, openButton, deleteButton);
+    toolbar.append(locales, actions);
+
+    const content = document.createElement("pre");
+    content.className = "i2p-history-card__content";
+    if (currentLocale === "json") {
+      content.classList.add("is-json");
+    }
+    content.textContent = getHistoryEntryDisplayText(entry, currentLocale);
+
+    card.append(top, toolbar, content);
+    return card;
+  }
+
+  function getHistoryEntryLocale(entry) {
+    return sidePanelState.historyLocales[entry.id] || getDefaultPanelLocale(entry.translations);
+  }
+
+  function getHistoryEntryDisplayText(entry, locale) {
+    if (locale === "json") {
+      return buildStructuredPromptText({
+        prompt: entry.prompt,
+        translations: entry.translations,
+        tags: entry.tags
+      });
+    }
+    if (locale === "zh") {
+      return entry.translations.zh || entry.translations.en || entry.prompt;
+    }
+    return entry.translations.en || entry.translations.zh || entry.prompt;
+  }
+
+  function deleteHistoryEntry(entryId) {
+    const next = sidePanelState.historyEntries.filter((entry) => entry.id !== entryId);
+    sidePanelState.historyEntries = next;
+    delete sidePanelState.historyLocales[entryId];
+    chrome.storage.local.set({ [HISTORY_STORAGE_KEY]: next }, () => {
+      if (chrome.runtime.lastError) {
+        console.warn("[Image2Prompt] Unable to delete history entry:", chrome.runtime.lastError);
+      }
+      renderSidePanel();
+    });
+  }
+
+  function closeSidePanels() {
+    if (!sidePanelState.quickOpen && !sidePanelState.historyOpen) {
+      return;
+    }
+    sidePanelState.quickOpen = false;
+    sidePanelState.historyOpen = false;
+    renderSidePanel();
+  }
+
+  function isSidePanelOpen() {
+    return sidePanelState.quickOpen || sidePanelState.historyOpen;
+  }
+
+  function isEventInsideSidePanel(target) {
+    if (!(target instanceof Node) || !sidePanelRefs) {
+      return false;
+    }
+    return [sidePanelRefs.handle, sidePanelRefs.quick, sidePanelRefs.history].some(
+      (node) => node?.contains?.(target)
+    );
+  }
+
   function buildPlatformUrl(prompt) {
-    const template = (config.platformUrl || DEFAULT_CONFIG.platformUrl).trim();
-    if (!template) {
-      return "";
-    }
-    const encodedPrompt = encodeURIComponent(prompt);
-    if (template.includes("{{prompt}}")) {
-      return template.replace(/{{prompt}}/g, encodedPrompt);
-    }
-    const separator = template.includes("?") ? "&" : "?";
-    return `${template}${separator}prompt=${encodedPrompt}`;
+    return buildPlatformUrlFromTemplate(config.platformUrl || DEFAULT_CONFIG.platformUrl, prompt);
   }
 
   function buildPlatformLaunchUrl(prompt, shouldAutofill = false) {
-    const template = (config.platformUrl || DEFAULT_CONFIG.platformUrl).trim();
-    if (!template) {
+    return buildPlatformLaunchUrlFromTemplate(
+      config.platformUrl || DEFAULT_CONFIG.platformUrl,
+      prompt,
+      shouldAutofill
+    );
+  }
+
+  function buildPlatformUrlFromTemplate(template, prompt) {
+    const safeTemplate = typeof template === "string" ? template.trim() : "";
+    if (!safeTemplate) {
       return "";
     }
-    if (shouldAutofill && !template.includes("{{prompt}}")) {
-      return template;
+    const encodedPrompt = encodeURIComponent(prompt);
+    if (safeTemplate.includes("{{prompt}}")) {
+      return safeTemplate.replace(/{{prompt}}/g, encodedPrompt);
     }
-    return buildPlatformUrl(prompt);
+    const separator = safeTemplate.includes("?") ? "&" : "?";
+    return `${safeTemplate}${separator}prompt=${encodedPrompt}`;
+  }
+
+  function buildPlatformLaunchUrlFromTemplate(template, prompt, shouldAutofill = false) {
+    const safeTemplate = typeof template === "string" ? template.trim() : "";
+    if (!safeTemplate) {
+      return "";
+    }
+    if (shouldAutofill && !safeTemplate.includes("{{prompt}}")) {
+      return safeTemplate;
+    }
+    return buildPlatformUrlFromTemplate(safeTemplate, prompt);
+  }
+
+  function shouldAutofillForPlatform(platformId, template) {
+    return typeof platformId === "string" && platformId.startsWith("custom-");
   }
 
   async function tryCopyToClipboard(text) {
