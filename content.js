@@ -1585,6 +1585,10 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     if (!element || !element.isConnected) {
       return false;
     }
+    // Don't count hidden elements
+    if (element.hidden || !element.classList.contains("is-visible")) {
+      return false;
+    }
     const rect = element.getBoundingClientRect();
     return (
       event.clientX >= rect.left &&
@@ -1599,8 +1603,8 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
       return;
     }
 
-    // Check handle hit
-    if (isPointerInsideElement(event, sidePanelRefs.handle)) {
+    // Check handle hit — the handle is always visible, use raw rect check
+    if (isPointerInsideHandle(event, sidePanelRefs.handle)) {
       event.stopPropagation();
       sideHandleWasDragged = false;
       sideHandleDragState = {
@@ -1614,7 +1618,12 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
       return;
     }
 
-    // Check if inside quick/history panels
+    // Only check panels if they are actually open
+    if (!isSidePanelOpen()) {
+      return;
+    }
+
+    // Check if inside quick/history panels (isPointerInsideElement checks visibility)
     if (
       isPointerInsideElement(event, sidePanelRefs.quick) ||
       isPointerInsideElement(event, sidePanelRefs.history)
@@ -1623,9 +1632,21 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     }
 
     // Click outside everything → close panels
-    if (isSidePanelOpen()) {
-      closeSidePanels();
+    closeSidePanels();
+  }
+
+  // Handle always-visible check (doesn't require is-visible class)
+  function isPointerInsideHandle(event, element) {
+    if (!element || !element.isConnected) {
+      return false;
     }
+    const rect = element.getBoundingClientRect();
+    return (
+      event.clientX >= rect.left &&
+      event.clientX <= rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.bottom
+    );
   }
 
   function handleDocumentClickForSide(event) {
@@ -1633,8 +1654,8 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
       return;
     }
 
-    // Check handle hit
-    if (isPointerInsideElement(event, sidePanelRefs.handle)) {
+    // Check handle hit — always visible
+    if (isPointerInsideHandle(event, sidePanelRefs.handle)) {
       event.stopPropagation();
       event.preventDefault();
       if (sideHandleWasDragged) {
@@ -1642,6 +1663,11 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
         return;
       }
       toggleSideQuickPanel();
+      return;
+    }
+
+    // Only check panels if they are actually open
+    if (!isSidePanelOpen()) {
       return;
     }
 
