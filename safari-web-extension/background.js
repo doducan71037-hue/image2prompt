@@ -291,8 +291,8 @@ function registerContextMenu() {
     chrome.contextMenus.create(
       {
         id: IMAGE_CONTEXT_MENU_ID,
-        title: "Generate prompt with image2prompt",
-        contexts: ["image"]
+        title: "\uD83C\uDFA8 Generate prompt with image2prompt",
+        contexts: ["image", "link"]
       },
       () => {
         if (chrome.runtime.lastError) {
@@ -308,8 +308,33 @@ function registerContextMenu() {
 
 async function handleImageContextMenuClick(info, tab) {
   const tabId = tab?.id;
-  const imageUrl = typeof info.srcUrl === "string" ? info.srcUrl : "";
-  if (!tabId || !imageUrl) {
+  if (!tabId) {
+    return;
+  }
+
+  let imageUrl = typeof info.srcUrl === "string" ? info.srcUrl : "";
+
+  // When right-clicking on a link (e.g. Pinterest thumbnails wrapped in <a>),
+  // Chrome reports it as a link context without srcUrl. Ask the content script
+  // for the image URL it captured from the underlying <img> element.
+  if (!imageUrl) {
+    try {
+      const result = await sendMessageToTabSafe(tabId, { type: "getContextImageUrl" });
+      imageUrl = typeof result?.imageUrl === "string" ? result.imageUrl : "";
+    } catch (error) {
+      // Content script may not be injected yet — inject and retry
+      await ensureContentScriptInjected(tabId);
+      try {
+        const result = await sendMessageToTabSafe(tabId, { type: "getContextImageUrl" });
+        imageUrl = typeof result?.imageUrl === "string" ? result.imageUrl : "";
+      } catch (retryError) {
+        console.warn("[Image2Prompt] Unable to get image URL from content script:", retryError);
+      }
+    }
+  }
+
+  if (!imageUrl) {
+    console.warn("[Image2Prompt] No image URL found for context menu click.");
     return;
   }
 
@@ -342,6 +367,18 @@ function sendMessageToTab(tabId, message) {
     chrome.tabs.sendMessage(tabId, message, (response) => {
       if (chrome.runtime.lastError) {
         reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+function sendMessageToTabSafe(tabId, message) {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, message, (response) => {
+      if (chrome.runtime.lastError) {
+        resolve(null);
         return;
       }
       resolve(response);

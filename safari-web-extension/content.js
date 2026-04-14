@@ -177,6 +177,15 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
           });
         return true;
       }
+
+      // Background asks for the image URL captured during the last right-click.
+      // This is used when right-clicking on a link overlay (e.g. Pinterest thumbnails)
+      // where Chrome reports a "link" context instead of "image".
+      if (message?.type === "getContextImageUrl") {
+        const imageUrl = lastContextAnchor?.imageUrl || "";
+        sendResponse({ imageUrl });
+        return false;
+      }
     });
   }
 
@@ -342,7 +351,21 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
   }
 
   function handleContextMenuCapture(event) {
-    const imageElement = findImageTarget(event.target);
+    // First, try the direct target as an <img>
+    let imageElement = findImageTarget(event.target);
+
+    // If not found, use elementsFromPoint to find an <img> underneath overlays
+    // (e.g. Pinterest puts <a> and <div> overlays on top of thumbnails)
+    if (!imageElement) {
+      const elementsAtPoint = document.elementsFromPoint(event.clientX, event.clientY);
+      for (const el of elementsAtPoint) {
+        if (el instanceof HTMLImageElement) {
+          imageElement = el;
+          break;
+        }
+      }
+    }
+
     if (!imageElement) {
       return;
     }
@@ -1229,7 +1252,24 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     if (node instanceof HTMLImageElement) {
       return node;
     }
-    return node?.closest?.("img") || null;
+    // Check if the node itself is inside an <img> ancestor (unlikely but safe)
+    const fromClosest = node?.closest?.("img");
+    if (fromClosest) {
+      return fromClosest;
+    }
+    // Try to find an <img> inside a parent container
+    // (handles Pinterest-style overlays where <a>/<div> sits on top of <img>)
+    if (node instanceof Element) {
+      const containerSelectors = "a, [data-test-id], [role='listitem'], [role='link']";
+      const parent = node.closest(containerSelectors) || node.parentElement;
+      if (parent) {
+        const img = parent.querySelector("img");
+        if (img) {
+          return img;
+        }
+      }
+    }
+    return null;
   }
 
   function findImageElementByUrl(targetUrl) {
@@ -1545,6 +1585,10 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     if (!element || !element.isConnected) {
       return false;
     }
+    // Don't count hidden elements
+    if (element.hidden || !element.classList.contains("is-visible")) {
+      return false;
+    }
     const rect = element.getBoundingClientRect();
     return (
       event.clientX >= rect.left &&
@@ -1559,8 +1603,8 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
       return;
     }
 
-    // Check handle hit
-    if (isPointerInsideElement(event, sidePanelRefs.handle)) {
+    // Check handle hit — the handle is always visible, use raw rect check
+    if (isPointerInsideHandle(event, sidePanelRefs.handle)) {
       event.stopPropagation();
       sideHandleWasDragged = false;
       sideHandleDragState = {
@@ -1574,7 +1618,12 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
       return;
     }
 
-    // Check if inside quick/history panels
+    // Only check panels if they are actually open
+    if (!isSidePanelOpen()) {
+      return;
+    }
+
+    // Check if inside quick/history panels (isPointerInsideElement checks visibility)
     if (
       isPointerInsideElement(event, sidePanelRefs.quick) ||
       isPointerInsideElement(event, sidePanelRefs.history)
@@ -1583,9 +1632,21 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
     }
 
     // Click outside everything → close panels
-    if (isSidePanelOpen()) {
-      closeSidePanels();
+    closeSidePanels();
+  }
+
+  // Handle always-visible check (doesn't require is-visible class)
+  function isPointerInsideHandle(event, element) {
+    if (!element || !element.isConnected) {
+      return false;
     }
+    const rect = element.getBoundingClientRect();
+    return (
+      event.clientX >= rect.left &&
+      event.clientX <= rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.bottom
+    );
   }
 
   function handleDocumentClickForSide(event) {
@@ -1593,8 +1654,8 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
       return;
     }
 
-    // Check handle hit
-    if (isPointerInsideElement(event, sidePanelRefs.handle)) {
+    // Check handle hit — always visible
+    if (isPointerInsideHandle(event, sidePanelRefs.handle)) {
       event.stopPropagation();
       event.preventDefault();
       if (sideHandleWasDragged) {
@@ -1602,6 +1663,11 @@ if (!globalThis.__IMAGE2PROMPT_CONTENT_READY__) {
         return;
       }
       toggleSideQuickPanel();
+      return;
+    }
+
+    // Only check panels if they are actually open
+    if (!isSidePanelOpen()) {
       return;
     }
 

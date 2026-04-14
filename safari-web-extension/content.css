@@ -375,7 +375,7 @@
   border-right: none;
   box-shadow: -26px 28px 64px var(--i2p-shadow);
   backdrop-filter: blur(24px) saturate(125%);
-  pointer-events: auto;
+  pointer-events: none;
   isolation: isolate;
   z-index: 2147483649;
   opacity: 0;
@@ -389,8 +389,12 @@
     box-shadow 0.3s ease;
 }
 
-.i2p-side-card *,
-.i2p-side-card button {
+.i2p-side-card.is-visible {
+  pointer-events: auto;
+}
+
+.i2p-side-card.is-visible *,
+.i2p-side-card.is-visible button {
   pointer-events: auto;
 }
 
